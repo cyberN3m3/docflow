@@ -1,5 +1,8 @@
 # DocFlow
 
+[![CI](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml/badge.svg)](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml)
+[![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/cybern3m3/docflow)
+
 A small-business document tool: convert Word, Excel, PowerPoint, text and image files to PDF, and merge PDFs. Users sign up, upload files, and download the results from their history.
 
 DocFlow is the subject of a **cloud migration case study**. It ships first as a typical "everything on one server" deployment (this repo, Phase 1), then gets migrated to a scalable, secure AWS architecture with Terraform (Phase 2).
@@ -54,30 +57,42 @@ The code is already prepared for the move: all config comes from environment var
 
 ## Run it
 
-### With Docker (the legacy deployment)
+### In GitHub Codespaces (recommended, nothing to install)
+
+The repo includes a dev container (`.devcontainer/`) with Python, Docker, Terraform and the AWS CLI, so the whole project, including the AWS migration, can be done from a browser.
+
+1. Click **Code → Codespaces → Create codespace on main** (or the badge above).
+2. When the terminal opens, start the legacy stack:
+   ```bash
+   docker compose up -d --build
+   docker compose ps
+   ```
+   A `.env` file is created from `.env.example` automatically. Change `SECRET_KEY` and the passwords in it for anything beyond local testing.
+3. Open the **Ports** tab, find port **80** and click the globe icon to open DocFlow.
+4. When you're done: `docker compose down`, then stop the codespace from github.com/codespaces to save your free hours.
+
+### On any machine with Docker
 
 ```bash
 cp .env.example .env        # then edit the passwords and SECRET_KEY
 docker compose up -d --build
 ```
 
-Open http://localhost, create an account, and convert something. Check on things with:
+Open http://localhost, create an account, and convert something.
+
+### Useful commands
 
 ```bash
-docker compose ps
-docker compose logs -f worker
-curl localhost/healthz
+docker compose ps               # are all six services running?
+docker compose logs -f worker   # watch conversions happen
+curl localhost/healthz          # app + database health
+./scripts/e2e.sh                # full end-to-end test against the running stack
+./scripts/backup.sh             # back up the database and files (the legacy way)
 ```
 
-Back up (the legacy way):
+### Without Docker (app development only)
 
-```bash
-./scripts/backup.sh
-```
-
-### Without Docker (quick local development)
-
-You still need Gotenberg for real conversions (`docker run -p 3000:3000 gotenberg/gotenberg:8`).
+The web app runs on plain Python, but real conversions need Gotenberg, which runs as a container. Without it, jobs fail with "Conversion service unavailable".
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -97,6 +112,15 @@ pytest
 
 The tests cover sign-up and login, convert and merge flows, file-type and size validation, merge ordering, one user being unable to reach another's files, failed conversions, deletion, and filename sanitising. Gotenberg is mocked, so they run anywhere.
 
+### Continuous integration
+
+Every push and pull request runs two jobs in GitHub Actions (`.github/workflows/ci.yml`):
+
+1. **Unit tests:** the pytest suite above.
+2. **End-to-end:** boots the full six-service stack with Docker Compose, then `scripts/e2e.sh` signs up a user, converts two real files to PDF with Gotenberg, merges them, and checks every download is a valid PDF.
+
+The CI badge at the top of this README shows the current result, so the app is proven to work on every change without a server running permanently.
+
 ---
 
 ## Project layout
@@ -115,7 +139,9 @@ app/
   static/        CSS
 tests/           pytest suite
 nginx/           reverse proxy config
-scripts/         backup.sh
+scripts/         backup.sh, e2e.sh (end-to-end test)
+.devcontainer/   Codespaces environment (Python, Docker, Terraform, AWS CLI)
+.github/         CI workflow
 docker-compose.yml, Dockerfile, .env.example
 ```
 

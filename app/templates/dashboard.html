@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="grid">
+  <section class="card">
+    <h2>Convert to PDF</h2>
+    <p class="muted">Word, Excel, PowerPoint, text or images. Max {{ max_upload_mb }} MB.</p>
+    <form method="post" action="/convert" enctype="multipart/form-data" class="stack">
+      <input type="file" name="file" required>
+      <button class="primary">Convert</button>
+    </form>
+    <p class="hint">Supported: {{ convertible }}</p>
+  </section>
+
+  <section class="card">
+    <h2>Merge PDFs</h2>
+    <p class="muted">Pick 2–20 PDFs. They're merged in the order selected.</p>
+    <form method="post" action="/merge" enctype="multipart/form-data" class="stack">
+      <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
+      <button class="primary">Merge</button>
+    </form>
+  </section>
+</div>
+
+<section class="card">
+  <h2>Your files</h2>
+  {% if jobs %}
+  <table class="jobs">
+    <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Created</th><th></th></tr></thead>
+    <tbody>
+    {% for job in jobs %}
+      <tr data-job="{{ job.id }}" data-status="{{ job.status }}">
+        <td>
+          {{ job.output_name }}
+          <div class="hint">{{ job.input_names | join(", ") | truncate(80) }}</div>
+          {% if job.error %}<div class="error-text">{{ job.error }}</div>{% endif %}
+        </td>
+        <td>{{ job.kind }}</td>
+        <td><span class="badge {{ job.status }}">{{ job.status }}</span></td>
+        <td class="hint">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
+        <td class="actions">
+          {% if job.status == "done" %}<a class="button" href="/jobs/{{ job.id }}/download">Download</a>{% endif %}
+          <form method="post" action="/jobs/{{ job.id }}/delete"><button class="link danger">Delete</button></form>
+        </td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+    <p class="muted">Nothing yet. Convert or merge something above.</p>
+  {% endif %}
+</section>
+
+<script>
+  // Poll unfinished jobs and refresh the page when any of them changes state.
+  const pending = [...document.querySelectorAll('tr[data-job]')]
+    .filter(r => ['queued', 'processing'].includes(r.dataset.status));
+  if (pending.length) {
+    const timer = setInterval(async () => {
+      for (const row of pending) {
+        try {
+          const res = await fetch(`/jobs/${row.dataset.job}/status`);
+          if (!res.ok) continue;
+          const { status } = await res.json();
+          if (status !== row.dataset.status) { clearInterval(timer); location.reload(); return; }
+        } catch (e) { /* network blip; try again next tick */ }
+      }
+    }, 2000);
+  }
+</script>
+{% endblock %}

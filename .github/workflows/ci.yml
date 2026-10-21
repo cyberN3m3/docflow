@@ -41,6 +41,13 @@ jobs:
         run: |
           docker compose ps
           docker compose logs --no-color --tail=100
+      - name: Surface errors as annotations
+        if: failure()
+        run: |
+          docker compose ps --format '{{.Service}}: {{.State}} {{.Health}}' | while read -r line; do echo "::warning title=Service::$line"; done
+          docker compose logs --no-color web worker nginx \
+            | grep -iE "error|exception|denied|refused|traceback" | tail -8 \
+            | while read -r line; do echo "::error title=Log::${line:0:300}"; done
       - name: Stop the stack
         if: always()
         run: docker compose down -v

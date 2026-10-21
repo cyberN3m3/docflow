@@ -17,7 +17,7 @@ services:
     build: .
     env_file: .env
     volumes:
-      - ./data/uploads:/data/uploads   # shared local disk (single point of failure)
+      - uploads:/data/uploads   # local disk on this one server (single point of failure)
     depends_on:
       postgres:
         condition: service_healthy
@@ -35,7 +35,7 @@ services:
     command: ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
     env_file: .env
     volumes:
-      - ./data/uploads:/data/uploads   # worker must see the same disk as web
+      - uploads:/data/uploads   # worker must see the same disk as web
     depends_on:
       postgres:
         condition: service_healthy
@@ -70,3 +70,4 @@ services:
 
 volumes:
   pgdata:
+  uploads:

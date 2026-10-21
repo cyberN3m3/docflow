@@ -21,7 +21,7 @@ flowchart LR
         K -->|convert / merge| G[Gotenberg<br/>LibreOffice]
         W --> P[(Postgres)]
         K --> P
-        W --- D[/Local disk<br/>data/uploads/]
+        W --- D[/Local disk<br/>uploads volume/]
         K --- D
     end
 ```

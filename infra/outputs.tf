@@ -45,3 +45,17 @@ output "alb_dns_name" {
 output "ecs_cluster" {
   value = module.compute.cluster_name
 }
+
+# --- Used by scripts/migrate/run-task.sh to start one-off tasks ---------------
+
+output "web_task_family" {
+  value = module.compute.web_task_family
+}
+
+output "public_subnet_ids_csv" {
+  value = join(",", module.network.public_subnet_ids)
+}
+
+output "app_security_group_id" {
+  value = module.network.app_security_group_id
+}

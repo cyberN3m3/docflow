@@ -15,3 +15,5 @@ tfplan
 *.tfplan
 crash.log
 infra/backend.hcl
+# Migration working files contain real user data: never commit them
+migration/

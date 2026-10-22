@@ -15,3 +15,8 @@ variable "environment" {
   type        = string
   default     = "demo"
 }
+
+variable "image_tag" {
+  description = "Which DocFlow image to run: the Git commit hash pushed by scripts/push-image.sh."
+  type        = string
+}

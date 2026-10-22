@@ -14,8 +14,8 @@ jobs:
     name: Unit tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
           cache: pip
@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: tests
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Create .env for CI
         run: |
           cp .env.example .env
@@ -56,8 +56,8 @@ jobs:
     name: Terraform checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - uses: actions/checkout@v7
+      - uses: hashicorp/setup-terraform@v4
       - name: Check formatting
         run: terraform fmt -check -recursive infra
       - name: Validate bootstrap
@@ -82,12 +82,12 @@ jobs:
       id-token: write       # lets the job request a GitHub OIDC token
       pull-requests: write  # lets it post the plan as a comment
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
           aws-region: us-east-1
-      - uses: hashicorp/setup-terraform@v3
+      - uses: hashicorp/setup-terraform@v4
         with:
           terraform_wrapper: false
       - name: Terraform init
@@ -106,7 +106,7 @@ jobs:
           cat plan.txt
         id: plan
       - name: Comment the plan on the pull request
-        uses: actions/github-script@v7
+        uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
@@ -147,8 +147,8 @@ jobs:
     outputs:
       image: ${{ steps.meta.outputs.image }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
@@ -211,21 +211,23 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: actions/checkout@v7
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: us-east-1
       - name: Is the AWS environment running?
         id: env
         run: |
-          ACTIVE=$(aws ecs describe-clusters --clusters docflow-demo \
-            --query 'length(clusters[?status==`ACTIVE`])' --output text)
-          if [ "$ACTIVE" = "1" ]; then
+          # Both services must be ACTIVE. Checking only the cluster missed the
+          # moment during `terraform destroy` when the services are DRAINING.
+          ACTIVE=$(aws ecs describe-services --cluster docflow-demo --services web worker \
+            --query 'length(services[?status==`ACTIVE`])' --output text 2>/dev/null || echo 0)
+          if [ "$ACTIVE" = "2" ]; then
             echo "up=true" >> "$GITHUB_OUTPUT"
           else
             echo "up=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::The AWS environment is destroyed (the normal state between sessions). The image is in ECR; it will be used at the next terraform apply."
+            echo "::notice::The AWS environment is destroyed or being destroyed (the normal state between sessions). The image is in ECR; it will be used at the next terraform apply."
           fi
       - name: Download the current task definitions
         if: steps.env.outputs.up == 'true'

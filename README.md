@@ -112,16 +112,24 @@ pytest
 
 The tests cover sign-up and login, convert and merge flows, file-type and size validation, merge ordering, one user being unable to reach another's files, failed conversions, deletion, and filename sanitising. Gotenberg is mocked, so they run anywhere.
 
-### Continuous integration
+### CI/CD pipeline
 
-Every push and pull request runs two jobs in GitHub Actions (`.github/workflows/ci.yml`):
+Every change runs through GitHub Actions (`.github/workflows/ci.yml`). **GitHub holds no AWS access keys**: jobs that touch AWS get short-lived credentials through OIDC, and each role can only be used from one place.
 
-1. **Unit tests:** the pytest suite above.
-2. **End-to-end:** boots the full six-service stack with Docker Compose, then `scripts/e2e.sh` signs up a user, converts two real files to PDF with Gotenberg, merges them, and checks every download is a valid PDF.
+| Trigger | Jobs |
+| --- | --- |
+| Pull request | Unit tests → end-to-end test of the full Docker Compose stack → `terraform fmt` and `validate` → **`terraform plan` posted as a PR comment** (read-only role, pull requests only) |
+| Merge to `main` | Same tests → build the image tagged with the commit → push to ECR → **security gate: blocks deployment if ECR's scan finds critical vulnerabilities** → deploy web and worker to ECS (rolls back automatically if unhealthy) → **smoke test** the live app with `e2e.sh` |
+| AWS environment destroyed (normal between sessions) | The image is still built, scanned and pushed; the deploy is skipped with a notice |
 
-The CI badge at the top of this README shows the current result, so the app is proven to work on every change without a server running permanently.
+Who can do what:
 
----
+| Role | Can be assumed by | Allowed to |
+| --- | --- | --- |
+| `docflow-github-deploy` | Only workflows on the `main` branch of this repo | Push DocFlow images, register task definitions, update the two DocFlow services |
+| `docflow-github-plan` | Only pull-request workflows of this repo | Read the Terraform state and the lookups the plan needs. No access to data, files or secrets. |
+
+**Terraform owns the infrastructure; the pipeline owns which image is running.** `terraform apply` stays manual (from a codespace), a deliberate cost-control decision: the environment is destroyed between sessions and rebuilt on demand. Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python, Actions, Docker and Terraform updates, and each one goes through the same pipeline.
 
 ## Configuration: one image, two environments
 
@@ -142,8 +150,7 @@ The app checks its configuration at start-up and stops with a clear error if a r
 Everything is built with Terraform from `infra/` (see the roadmap for what each phase adds). From a codespace signed in to AWS:
 
 ```bash
-./scripts/push-image.sh                  # build, tag with the Git commit, push to ECR
-export TF_VAR_image_tag=<tag it printed>
+export TF_VAR_image_tag=$(git rev-parse --short origin/main)   # the image CI built for main
 cd infra
 terraform plan -out tfplan               # read it
 terraform apply tfplan                   # about 15 minutes
@@ -184,8 +191,8 @@ docker-compose.yml, Dockerfile, .env.example
 - [x] **Phase 3:** Network and data layer: VPC with no NAT Gateway, S3, SQS with dead-letter queue, private RDS, Secrets Manager, ECR
 - [x] **Phase 4:** Cloud-ready app: S3 storage with presigned downloads, SQS broker, database settings from Secrets Manager
 - [x] **Phase 5:** ECS Fargate (web + worker with a Gotenberg sidecar), load balancer reachable only through CloudFront (HTTPS), autoscaling
-- [ ] **Phase 6:** The migration: move users, jobs and files, with a runbook and measured downtime
-- [ ] **Phase 7:** CI/CD with GitHub Actions and OIDC (no stored AWS keys)
+- [x] **Phase 6:** The migration: 5 users, 21 jobs and 21 files moved with zero data loss and ~9 minutes of downtime ([runbook](docs/migration-runbook.md))
+- [x] **Phase 7:** CI/CD with GitHub Actions and OIDC: no stored AWS keys, plan previews on PRs, scan-gated deploys with smoke tests
 - [ ] **Phase 8:** Security audit (Prowler, CIS benchmark) and hardening, with before/after scores
 - [ ] **Phase 9:** Cost comparison (VM vs AWS) and optimisation
 - [ ] **Phase 10:** Monitoring, alerting and disaster recovery drill

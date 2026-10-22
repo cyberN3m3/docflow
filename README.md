@@ -137,6 +137,21 @@ The same Docker image runs on the legacy server and on AWS. Only environment var
 
 The app checks its configuration at start-up and stops with a clear error if a required setting is missing.
 
+## Deploy to AWS
+
+Everything is built with Terraform from `infra/` (see the roadmap for what each phase adds). From a codespace signed in to AWS:
+
+```bash
+./scripts/push-image.sh                  # build, tag with the Git commit, push to ECR
+export TF_VAR_image_tag=<tag it printed>
+cd infra
+terraform plan -out tfplan               # read it
+terraform apply tfplan                   # about 15 minutes
+terraform output app_url                 # open it
+../scripts/e2e.sh "$(terraform output -raw app_url)"
+terraform destroy                        # at the end of every session
+```
+
 ## Project layout
 
 ```
@@ -167,7 +182,7 @@ docker-compose.yml, Dockerfile, .env.example
 - [x] **Phase 2:** Terraform foundations: encrypted, versioned state bucket with native locking
 - [x] **Phase 3:** Network and data layer: VPC with no NAT Gateway, S3, SQS with dead-letter queue, private RDS, Secrets Manager, ECR
 - [x] **Phase 4:** Cloud-ready app: S3 storage with presigned downloads, SQS broker, database settings from Secrets Manager
-- [ ] **Phase 5:** ECS Fargate, load balancer and CloudFront (HTTPS)
+- [x] **Phase 5:** ECS Fargate (web + worker with a Gotenberg sidecar), load balancer reachable only through CloudFront (HTTPS), autoscaling
 - [ ] **Phase 6:** The migration: move users, jobs and files, with a runbook and measured downtime
 - [ ] **Phase 7:** CI/CD with GitHub Actions and OIDC (no stored AWS keys)
 - [ ] **Phase 8:** Security audit (Prowler, CIS benchmark) and hardening, with before/after scores

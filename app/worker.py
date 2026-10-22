@@ -15,14 +15,36 @@ from .storage import get_storage
 
 log = logging.getLogger(__name__)
 
-celery_app = Celery("docflow", broker=settings.redis_url)
+QUEUE_NAME = "docflow-jobs"
+
+celery_app = Celery("docflow", broker=settings.celery_broker_url)
 celery_app.conf.update(
     task_always_eager=settings.celery_eager,
+    task_default_queue=QUEUE_NAME,
     task_acks_late=True,           # don't lose a job if the worker dies mid-conversion
     worker_prefetch_multiplier=1,  # conversions are heavy; take one at a time
     task_ignore_result=True,       # status lives in Postgres, not the result backend
     broker_connection_retry_on_startup=True,
 )
+
+def sqs_transport_options(region: str, queue_url: str) -> dict:
+    """Point Celery at the queue Terraform created.
+
+    "Predefined" means Celery never tries to create or list queues, so the
+    worker's IAM role only needs permission on this one queue (least privilege).
+    """
+    return {
+        "region": region,
+        "predefined_queues": {QUEUE_NAME: {"url": queue_url}},
+        "visibility_timeout": 900,  # matches the queue's setting in Terraform
+        "wait_time_seconds": 20,    # long polling: fewer requests, lower bill
+    }
+
+
+if settings.uses_sqs:
+    celery_app.conf.broker_transport_options = sqs_transport_options(
+        settings.aws_region, settings.sqs_queue_url
+    )
 
 
 def _fail(db, job: Job, message: str) -> None:

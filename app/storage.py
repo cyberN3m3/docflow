@@ -1,10 +1,15 @@
-"""File storage.
+"""File storage behind one small interface.
 
-LEGACY: files go to a local directory shared by the web and worker containers.
-This is the main thing that breaks when you scale to more than one server,
-and it gets replaced by an S3Storage class during the AWS migration. Keep the
-interface (save / read / delete / exists) so that swap is a one-line change.
+Two backends with the same methods, so the rest of the app never knows
+which one it is using:
+
+  LocalStorage  files on a local disk (the legacy single server)
+  S3Storage     files in an S3 bucket (AWS)
+
+STORAGE_BACKEND picks one. Only S3 can hand out download links
+(presigned URLs); LocalStorage returns None and the app streams the file.
 """
+from functools import lru_cache
 from pathlib import Path
 
 from .config import settings
@@ -35,6 +40,73 @@ class LocalStorage:
     def delete(self, key: str) -> None:
         self._path(key).unlink(missing_ok=True)
 
+    def download_url(self, key: str, filename: str) -> str | None:
+        return None  # no links from a local disk; the app streams the file
 
-def get_storage() -> LocalStorage:
-    return LocalStorage(settings.storage_dir)
+
+class S3Storage:
+    """Stores files in S3. Credentials come from the ECS task role, never from code."""
+
+    def __init__(self, bucket: str, region: str, url_expiry: int = 300) -> None:
+        import boto3  # imported here so the legacy stack doesn't need AWS libraries loaded
+        from botocore.config import Config
+
+        self.bucket = bucket
+        self.url_expiry = url_expiry
+        # Signature Version 4: the current signing method. Older SigV2 links
+        # are being retired by AWS and don't work with every bucket setting.
+        self.client = boto3.client(
+            "s3",
+            region_name=region,
+            config=Config(signature_version="s3v4", s3={"addressing_style": "virtual"}),
+        )
+
+    def save(self, key: str, data: bytes) -> None:
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=data)
+
+    def read(self, key: str) -> bytes:
+        return self.client.get_object(Bucket=self.bucket, Key=key)["Body"].read()
+
+    def exists(self, key: str) -> bool:
+        from botocore.exceptions import ClientError
+
+        try:
+            self.client.head_object(Bucket=self.bucket, Key=key)
+            return True
+        except ClientError as exc:
+            if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
+                return False
+            raise
+
+    def delete(self, key: str) -> None:
+        self.client.delete_object(Bucket=self.bucket, Key=key)
+
+    def download_url(self, key: str, filename: str) -> str:
+        """A short-lived link straight to S3, so large files never pass through the web server."""
+        return self.client.generate_presigned_url(
+            "get_object",
+            Params={
+                "Bucket": self.bucket,
+                "Key": key,
+                "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                "ResponseContentType": "application/pdf",
+            },
+            ExpiresIn=self.url_expiry,
+        )
+
+
+@lru_cache(maxsize=1)
+def _storage(backend: str, root: str, bucket: str | None, region: str, expiry: int):
+    if backend == "s3":
+        return S3Storage(bucket, region, expiry)
+    return LocalStorage(root)
+
+
+def get_storage():
+    return _storage(
+        settings.storage_backend,
+        settings.storage_dir,
+        settings.s3_bucket,
+        settings.aws_region,
+        settings.download_url_expiry,
+    )

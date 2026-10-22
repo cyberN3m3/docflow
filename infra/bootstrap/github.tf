@@ -15,6 +15,12 @@ locals {
   account_id = data.aws_caller_identity.current.account_id
   region     = data.aws_region.current.region
   cluster    = var.environment_name
+
+  # Repositories created after 15 July 2026 get OIDC subjects that include
+  # immutable owner and repo IDs, e.g. repo:octocat@123/my-repo@456:...
+  # If someone deleted this repo and another account re-created the same
+  # name, the IDs would differ, so their workflows still could not get in.
+  github_subject = "repo:${var.github_owner}@${var.github_owner_id}/${var.github_repo}@${var.github_repo_id}"
 }
 
 resource "aws_iam_openid_connect_provider" "github" {
@@ -25,8 +31,8 @@ resource "aws_iam_openid_connect_provider" "github" {
 # Trust policy builder: only this repo, and only the given branch or event.
 data "aws_iam_policy_document" "github_trust" {
   for_each = {
-    deploy = "repo:${var.github_repository}:ref:refs/heads/main"
-    plan   = "repo:${var.github_repository}:pull_request"
+    deploy = "${local.github_subject}:ref:refs/heads/main"
+    plan   = "${local.github_subject}:pull_request"
   }
 
   statement {

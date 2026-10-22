@@ -170,17 +170,37 @@ jobs:
             docker push "$IMAGE"
           fi
       - name: Security gate - block critical vulnerabilities
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
         run: |
-          aws ecr wait image-scan-complete --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}"
-          aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}" \
+          # ECR starts the scan a few seconds after the push, so poll: "not
+          # found yet" and "in progress" mean wait; COMPLETE or FAILED end it.
+          for i in $(seq 1 60); do
+            STATUS=$(aws ecr describe-image-scan-findings --repository-name docflow \
+              --image-id imageTag="$TAG" --query 'imageScanStatus.status' --output text 2>/dev/null || echo NOT_STARTED)
+            echo "Scan status: $STATUS (check $i)"
+            case "$STATUS" in
+              COMPLETE) break ;;
+              FAILED|UNSUPPORTED_IMAGE)
+                aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="$TAG" \
+                  --query 'imageScanStatus.description' --output text
+                echo "::error::The image scan did not complete ($STATUS); not deploying an unscanned image."
+                exit 1 ;;
+            esac
+            sleep 10
+          done
+          [ "$STATUS" = "COMPLETE" ] || { echo "::error::Timed out waiting for the image scan."; exit 1; }
+
+          echo "Findings by severity:"
+          aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="$TAG" \
             --query 'imageScanFindings.findingSeverityCounts' --output table
-          CRITICAL=$(aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}" \
+          CRITICAL=$(aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="$TAG" \
             --query 'imageScanFindings.findingSeverityCounts.CRITICAL' --output text)
           if [ "$CRITICAL" != "None" ] && [ "$CRITICAL" -gt 0 ]; then
             echo "::error::Image has $CRITICAL CRITICAL vulnerabilities; not deploying."
             exit 1
           fi
-          echo "No critical vulnerabilities."
+          echo "::notice::Security gate passed: no critical vulnerabilities."
 
   deploy:
     name: Deploy to ECS

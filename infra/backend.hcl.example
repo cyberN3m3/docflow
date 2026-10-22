@@ -1,0 +1,5 @@
+# Copy to backend.hcl and replace 123456789012 with your AWS account ID.
+bucket       = "docflow-tfstate-123456789012"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true

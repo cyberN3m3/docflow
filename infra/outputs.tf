@@ -31,3 +31,17 @@ output "db_password_secret_arn" {
 output "app_secret_key_arn" {
   value = aws_secretsmanager_secret.app_secret_key.arn
 }
+
+output "app_url" {
+  description = "DocFlow's public HTTPS address."
+  value       = "https://${module.edge.cloudfront_domain_name}"
+}
+
+output "alb_dns_name" {
+  description = "The load balancer's own address. Visiting it directly should be refused."
+  value       = module.edge.alb_dns_name
+}
+
+output "ecs_cluster" {
+  value = module.compute.cluster_name
+}

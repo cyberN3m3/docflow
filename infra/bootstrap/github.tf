@@ -154,11 +154,21 @@ data "aws_iam_policy_document" "github_plan" {
   }
 
   statement {
+    sid = "ReadDocflowRepository"
+    actions = [
+      "ecr:DescribeRepositories",
+      "ecr:DescribeImages",
+      "ecr:ListTagsForResource",
+    ]
+    resources = [aws_ecr_repository.app.arn]
+  }
+
+  statement {
     sid = "ReadPlanLookups"
     actions = [
       "ec2:DescribeAvailabilityZones",
       "ec2:DescribeManagedPrefixLists",
-      "ecr:DescribeRepositories",
+      "ec2:GetManagedPrefixListEntries",
       "cloudfront:GetCachePolicy",
       "cloudfront:ListCachePolicies",
       "cloudfront:GetOriginRequestPolicy",

@@ -66,3 +66,189 @@ jobs:
       - name: Validate main environment
         working-directory: infra
         run: terraform init -backend=false && terraform validate
+  # ---------------------------------------------------------------------------
+  # Pull requests: show what Terraform would change, as a PR comment.
+  # Uses the read-only plan role. -refresh=false and -lock=false keep it
+  # read-only: it compares the code with the saved state without touching AWS
+  # resources or locking the state.
+  # ---------------------------------------------------------------------------
+  plan:
+    name: Terraform plan
+    if: github.event_name == 'pull_request' && vars.AWS_PLAN_ROLE_ARN != ''
+    needs: terraform
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write       # lets the job request a GitHub OIDC token
+      pull-requests: write  # lets it post the plan as a comment
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Terraform init
+        working-directory: infra
+        run: |
+          printf 'bucket = "%s"\nregion = "us-east-1"\nencrypt = true\nuse_lockfile = true\n' \
+            "${{ vars.TF_STATE_BUCKET }}" > backend.hcl
+          terraform init -input=false -backend-config=backend.hcl
+      - name: Terraform plan
+        working-directory: infra
+        run: |
+          set +e
+          terraform plan -input=false -no-color -refresh=false -lock=false \
+            -var "image_tag=${GITHUB_SHA::7}" > plan.txt 2>&1
+          echo "exit=$?" >> "$GITHUB_OUTPUT"
+          cat plan.txt
+        id: plan
+      - name: Comment the plan on the pull request
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const full = fs.readFileSync('infra/plan.txt', 'utf8');
+            const summary = (full.match(/^(Plan:.*|No changes\..*)$/m) || ['(see the full plan in the job log)'])[0];
+            const body = [
+              '### Terraform plan',
+              `**${summary}**`,
+              '<details><summary>Full plan</summary>',
+              '',
+              '```',
+              full.length > 60000 ? full.slice(-60000) : full,
+              '```',
+              '</details>',
+              '',
+              '_Read-only preview (no refresh, no lock). Applying is done manually from a codespace._',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner, repo: context.repo.repo,
+              issue_number: context.issue.number, body,
+            });
+      - name: Fail if the plan failed
+        if: steps.plan.outputs.exit != '0'
+        run: exit 1
+
+  # ---------------------------------------------------------------------------
+  # Merges to main: build the image, scan it, push it, deploy it.
+  # Uses the deploy role, which only the main branch can assume.
+  # ---------------------------------------------------------------------------
+  build-push:
+    name: Build, scan and push image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
+    needs: [tests, e2e, terraform]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      image: ${{ steps.meta.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - uses: aws-actions/amazon-ecr-login@v2
+        id: ecr
+      - name: Work out the image name
+        id: meta
+        run: |
+          TAG="$(git rev-parse --short HEAD)"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image=${{ steps.ecr.outputs.registry }}/docflow:$TAG" >> "$GITHUB_OUTPUT"
+      - name: Build and push (skipped if this commit's image already exists)
+        run: |
+          IMAGE="${{ steps.meta.outputs.image }}"
+          if aws ecr describe-images --repository-name docflow --image-ids imageTag="${{ steps.meta.outputs.tag }}" >/dev/null 2>&1; then
+            echo "::notice::$IMAGE already exists (tags are immutable); not rebuilding."
+          else
+            docker build --platform linux/amd64 -t "$IMAGE" .
+            docker push "$IMAGE"
+          fi
+      - name: Security gate - block critical vulnerabilities
+        run: |
+          aws ecr wait image-scan-complete --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}"
+          aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}" \
+            --query 'imageScanFindings.findingSeverityCounts' --output table
+          CRITICAL=$(aws ecr describe-image-scan-findings --repository-name docflow --image-id imageTag="${{ steps.meta.outputs.tag }}" \
+            --query 'imageScanFindings.findingSeverityCounts.CRITICAL' --output text)
+          if [ "$CRITICAL" != "None" ] && [ "$CRITICAL" -gt 0 ]; then
+            echo "::error::Image has $CRITICAL CRITICAL vulnerabilities; not deploying."
+            exit 1
+          fi
+          echo "No critical vulnerabilities."
+
+  deploy:
+    name: Deploy to ECS
+    needs: build-push
+    runs-on: ubuntu-latest
+    concurrency: deploy-production  # never run two deploys at once
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+      - name: Is the AWS environment running?
+        id: env
+        run: |
+          ACTIVE=$(aws ecs describe-clusters --clusters docflow-demo \
+            --query 'length(clusters[?status==`ACTIVE`])' --output text)
+          if [ "$ACTIVE" = "1" ]; then
+            echo "up=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "up=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::The AWS environment is destroyed (the normal state between sessions). The image is in ECR; it will be used at the next terraform apply."
+          fi
+      - name: Download the current task definitions
+        if: steps.env.outputs.up == 'true'
+        run: |
+          for s in web worker; do
+            aws ecs describe-task-definition --task-definition "docflow-demo-$s" \
+              --query taskDefinition > "$s-task.json"
+          done
+      - name: Point the web task at the new image
+        if: steps.env.outputs.up == 'true'
+        id: web
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: web-task.json
+          container-name: web
+          image: ${{ needs.build-push.outputs.image }}
+      - name: Point the worker task at the new image
+        if: steps.env.outputs.up == 'true'
+        id: worker
+        uses: aws-actions/amazon-ecs-render-task-definition@v1
+        with:
+          task-definition: worker-task.json
+          container-name: worker
+          image: ${{ needs.build-push.outputs.image }}
+      - name: Deploy web (waits until healthy; ECS rolls back if not)
+        if: steps.env.outputs.up == 'true'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.web.outputs.task-definition }}
+          cluster: docflow-demo
+          service: web
+          wait-for-service-stability: true
+      - name: Deploy worker
+        if: steps.env.outputs.up == 'true'
+        uses: aws-actions/amazon-ecs-deploy-task-definition@v2
+        with:
+          task-definition: ${{ steps.worker.outputs.task-definition }}
+          cluster: docflow-demo
+          service: worker
+          wait-for-service-stability: true
+      - name: Smoke test the live app
+        if: steps.env.outputs.up == 'true'
+        run: |
+          DOMAIN=$(aws cloudfront list-distributions \
+            --query "DistributionList.Items[?Comment=='docflow-demo DocFlow'].DomainName | [0]" --output text)
+          ./scripts/e2e.sh "https://$DOMAIN"

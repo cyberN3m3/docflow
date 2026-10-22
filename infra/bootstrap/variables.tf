@@ -4,10 +4,27 @@ variable "region" {
   default     = "us-east-1"
 }
 
-variable "github_repository" {
-  description = "owner/name of the GitHub repo allowed to deploy. Case-sensitive: must match GitHub exactly."
+variable "github_owner" {
+  description = "GitHub account that owns the repo. Case-sensitive: must match GitHub exactly."
   type        = string
-  default     = "cyberN3m3/docflow"
+  default     = "cyberN3m3"
+}
+
+variable "github_owner_id" {
+  description = "Immutable numeric ID of the owner (GitHub API: repos/{owner}/{repo} -> owner.id)."
+  type        = string
+  default     = "239107129"
+}
+
+variable "github_repo" {
+  type    = string
+  default = "docflow"
+}
+
+variable "github_repo_id" {
+  description = "Immutable numeric ID of the repo (GitHub API: repos/{owner}/{repo} -> id)."
+  type        = string
+  default     = "1428678851"
 }
 
 variable "environment_name" {

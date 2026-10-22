@@ -7,3 +7,7 @@ output "region" {
   description = "Region of the state bucket."
   value       = var.region
 }
+output "ecr_repository_url" {
+  description = "Where to push DocFlow Docker images."
+  value       = aws_ecr_repository.app.repository_url
+}

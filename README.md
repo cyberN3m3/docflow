@@ -168,7 +168,8 @@ app/
   static/        CSS
 tests/           pytest suite
 nginx/           reverse proxy config
-scripts/         backup.sh, e2e.sh (end-to-end test)
+scripts/         backup.sh, e2e.sh (end-to-end test), push-image.sh,
+                 migrate/ (one-off AWS tasks, count comparison)
 .devcontainer/   Codespaces environment (Python, Docker, Terraform, AWS CLI)
 .github/         CI workflow
 docker-compose.yml, Dockerfile, .env.example

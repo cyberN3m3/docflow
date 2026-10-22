@@ -123,6 +123,20 @@ The CI badge at the top of this README shows the current result, so the app is p
 
 ---
 
+## Configuration: one image, two environments
+
+The same Docker image runs on the legacy server and on AWS. Only environment variables change:
+
+| Setting | Legacy (Docker Compose) | AWS (ECS Fargate) |
+| --- | --- | --- |
+| File storage | `STORAGE_BACKEND=local`, files on the uploads volume | `STORAGE_BACKEND=s3`, `S3_BUCKET` |
+| Downloads | Streamed through the web server | Redirect to a 5-minute S3 presigned link (`DOWNLOAD_URL_EXPIRY_SECONDS`) |
+| Job queue | `REDIS_URL` | `CELERY_BROKER_URL=sqs://`, `SQS_QUEUE_URL` (predefined queue, so no permission to create queues is needed) |
+| Database | `DATABASE_URL` | `DB_HOST`, `DB_NAME`, `DB_USER`, plus `DB_PASSWORD` injected from Secrets Manager; SSL required |
+| AWS credentials | Not used | From the ECS task role; nothing stored |
+
+The app checks its configuration at start-up and stops with a clear error if a required setting is missing.
+
 ## Project layout
 
 ```
@@ -149,9 +163,13 @@ docker-compose.yml, Dockerfile, .env.example
 
 ## Roadmap
 
-- [x] **Phase 1:** App + legacy single-server deployment
-- [ ] **Phase 2:** Migrate to AWS with Terraform (VPC, ECS Fargate, RDS, S3, SQS, ALB, ACM, Secrets Manager, CloudWatch) + migration runbook
-- [ ] **Phase 3:** CI/CD with GitHub Actions and OIDC
-- [ ] **Phase 4:** Security audit (Prowler / CIS benchmark) and hardening, with before/after scores
-- [ ] **Phase 5:** Cost comparison (VM vs AWS) and optimisation
-- [ ] **Phase 6:** Monitoring, alerting and disaster recovery drill
+- [x] **Phase 0–1:** App, legacy single-server deployment, and a secured AWS account (MFA, budget alerts, SSO with no access keys)
+- [x] **Phase 2:** Terraform foundations: encrypted, versioned state bucket with native locking
+- [x] **Phase 3:** Network and data layer: VPC with no NAT Gateway, S3, SQS with dead-letter queue, private RDS, Secrets Manager, ECR
+- [x] **Phase 4:** Cloud-ready app: S3 storage with presigned downloads, SQS broker, database settings from Secrets Manager
+- [ ] **Phase 5:** ECS Fargate, load balancer and CloudFront (HTTPS)
+- [ ] **Phase 6:** The migration: move users, jobs and files, with a runbook and measured downtime
+- [ ] **Phase 7:** CI/CD with GitHub Actions and OIDC (no stored AWS keys)
+- [ ] **Phase 8:** Security audit (Prowler, CIS benchmark) and hardening, with before/after scores
+- [ ] **Phase 9:** Cost comparison (VM vs AWS) and optimisation
+- [ ] **Phase 10:** Monitoring, alerting and disaster recovery drill

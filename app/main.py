@@ -28,6 +28,8 @@ EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    settings.validate()  # stop at start-up if the configuration is incomplete
+    log.info("storage=%s broker=%s", settings.storage_backend, "sqs" if settings.uses_sqs else "redis")
     init_db()
     yield
 
@@ -277,13 +279,20 @@ def download(job_id: str, user: User = Depends(require_user), db: Session = Depe
     job = get_own_job(db, user, job_id)
     if job.status != "done" or not job.output_key:
         raise HTTPException(status_code=409, detail="Job is not finished")
-    # LEGACY: streams the file through the app server. After migration this
-    # becomes a redirect to a short-lived S3 presigned URL.
-    data = get_storage().read(job.output_key)
+    filename = job.output_name or "output.pdf"
+    storage = get_storage()
+
+    # On AWS: send the browser straight to S3 with a link that expires in a
+    # few minutes. The file never passes through the web server.
+    url = storage.download_url(job.output_key, filename)
+    if url:
+        return RedirectResponse(url, status_code=302)
+
+    # Legacy: stream the file through the app from the local disk.
     return Response(
-        data,
+        storage.read(job.output_key),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{job.output_name or "output.pdf"}"'},
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

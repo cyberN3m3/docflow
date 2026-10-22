@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # End-to-end test against a running DocFlow stack (real Gotenberg, real worker).
 # Usage:  docker compose up -d --build && ./scripts/e2e.sh [base_url]
+# Downloads follow redirects (-L), so the same test works when the app
+# hands out S3 download links on AWS.
 set -euo pipefail
 
 BASE="${1:-http://localhost}"
@@ -53,7 +55,7 @@ printf 'Hello from the DocFlow end-to-end test.\n' > "$WORK/hello.txt"
 curl -fs -c "$JAR" -b "$JAR" -o /dev/null -F "file=@$WORK/hello.txt" "$BASE/convert"
 JOB1=$(latest_job_id)
 wait_for_job "$JOB1"
-curl -fs -b "$JAR" -o "$WORK/one.pdf" "$BASE/jobs/$JOB1/download"
+curl -fsL -b "$JAR" -o "$WORK/one.pdf" "$BASE/jobs/$JOB1/download"
 check_pdf "$WORK/one.pdf"
 
 say "Converting a second file"
@@ -61,7 +63,7 @@ printf 'Second page.\n' > "$WORK/second.txt"
 curl -fs -c "$JAR" -b "$JAR" -o /dev/null -F "file=@$WORK/second.txt" "$BASE/convert"
 JOB2=$(latest_job_id)
 wait_for_job "$JOB2"
-curl -fs -b "$JAR" -o "$WORK/two.pdf" "$BASE/jobs/$JOB2/download"
+curl -fsL -b "$JAR" -o "$WORK/two.pdf" "$BASE/jobs/$JOB2/download"
 check_pdf "$WORK/two.pdf"
 
 say "Merging the two PDFs"
@@ -69,7 +71,7 @@ curl -fs -c "$JAR" -b "$JAR" -o /dev/null \
   -F "files=@$WORK/one.pdf" -F "files=@$WORK/two.pdf" "$BASE/merge"
 JOB3=$(latest_job_id)
 wait_for_job "$JOB3"
-curl -fs -b "$JAR" -o "$WORK/merged.pdf" "$BASE/jobs/$JOB3/download"
+curl -fsL -b "$JAR" -o "$WORK/merged.pdf" "$BASE/jobs/$JOB3/download"
 check_pdf "$WORK/merged.pdf"
 
 say "All end-to-end checks passed"

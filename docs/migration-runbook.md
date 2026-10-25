@@ -56,7 +56,7 @@ Times are UTC, taken from Docker and AWS records (container stop time, ECS task 
 | **Data lost** | | | **0** |
 | **Downtime** (freeze → automated verification) | | | **~9 minutes** |
 
-Evidence: `docs/evidence/phase6-migration-verified.png`
+Evidence: [phase6-migration-verified.png](evidence/phase6-migration-verified.png)
 
 ## In a real production migration
 

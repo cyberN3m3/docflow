@@ -56,23 +56,37 @@ Measured with `./scripts/security/prowler-scan.sh before|after`.
 
 | | Before Phase 8 | After Phase 8 |
 | --- | --- | --- |
-| All checks passing | _to be measured_ | _to be measured_ |
-| CIS benchmark passing | _to be measured_ | _to be measured_ |
-| Critical / high failures | _to be measured_ | _to be measured_ |
+| All checks passing | 67.4% (638 / 946) | **69.4%** (718 / 1,035) |
+| CIS AWS benchmark 7.0 passing | 60.6% (103 / 170) | **63.5%** (113 / 178) |
+| Critical / high failures | 8 / 68 | 8 / 67 |
+
+Scanned on 2026-10-25, before and after applying Phase 8. Evidence: [before](evidence/phase8-prowler-before.png), [after](evidence/phase8-prowler-after.png).
+
+**How to read this:** Prowler scans the **whole AWS account**, and this account also hosts older projects: a public Lambda function and three public S3 buckets (one is a live static website). They account for most of the remaining critical findings, and they are why the account-wide S3 public access block stays off (section 5). The rest are documented trade-offs (public IPs instead of a NAT Gateway, AWS-managed keys, no AWS Config), AWS-managed roles that can't be edited, older task definition revisions, and one false positive. The number of checks rose because Phase 8 added resources (WAF, flow logs, GuardDuty), each with its own checks.
+
+The baseline scan also led to one more fix: the ECS and flow-log role trust policies now carry `aws:SourceAccount` / `aws:SourceArn` conditions (confused-deputy protection).
 
 ### Container image (Amazon ECR scan)
 
-| | Image `8e10b7b` (Phase 7) | After Phase 8 |
+| | Image `8e10b7b` (Phase 7) | After Phase 8 (scanned 2026-10-25) |
 | --- | --- | --- |
-| Critical | 0 | _next scan_ |
-| High | 3 | _next scan_ |
-| Medium / Low | 9 / 3 | _next scan_ |
+| Critical | 0 | 0 |
+| High | 3 | 3 |
+| Medium / Low | 9 / 3 | 9 / 3 |
 
-Fix applied: the Dockerfile now installs the latest Debian security updates and upgrades `pip` at build time, instead of relying on the base image's age.
+The Dockerfile now installs the latest Debian security updates and upgrades `pip` at build time. The 3 HIGH findings remained because **Debian 13 (trixie) has no fix for them yet**: the packages are already at the newest available version. Each was checked against the [Debian security tracker](https://security-tracker.debian.org/) and against how DocFlow uses the library:
+
+| CVE | Package (installed) | Debian 13 status | Reachable in DocFlow? | Decision |
+| --- | --- | --- | --- | --- |
+| [CVE-2026-19499](https://security-tracker.debian.org/tracker/CVE-2026-19499) | glibc 2.41-12+deb13u4 | Vulnerable, `no-dsa` (minor issue); fixed only in Debian testing (2.43-7) | No: the bug is in `strfmon` (currency formatting), which the app never calls | Accept; review 2026-11-25 |
+| [CVE-2026-5435](https://security-tracker.debian.org/tracker/CVE-2026-5435) | glibc 2.41-12+deb13u4 | Vulnerable, `no-dsa` (minor issue); fixed only in Debian testing (2.43-7) | No: deprecated resolver functions that print DNS TSIG records, which the app never calls | Accept; review 2026-11-25 |
+| [CVE-2026-85091](https://security-tracker.debian.org/tracker/CVE-2026-85091) | zlib 1.3.dfsg+really1.3.1-1 | Vulnerable, no fixed version yet | No: needs non-blocking `gzwrite()` followed by `gzprintf()`; Python's `gzip` module and the app don't use those C functions | Accept; review 2026-11-25 |
+
+The CI gate still blocks any CRITICAL finding, and Dependabot's weekly Docker update rebuilds the image once Debian ships fixes. A rebuild after the review date should clear these. The longer-term option is a minimal base image (distroless or Chainguard) with fewer packages to patch.
 
 ### Threat detection
 
-GuardDuty (threat detection) and Security Hub (posture score) are enabled through their 30-day free trials. Their findings are reviewed in section 7.
+GuardDuty (threat detection) was enabled on 2026-10-25 through its 30-day free trial. High-severity findings are emailed automatically (EventBridge → SNS, see `docs/operations.md`).
 
 ## 5. Accepted risks
 

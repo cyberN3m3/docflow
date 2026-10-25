@@ -9,10 +9,10 @@
 | --- | --- |
 | **Migration** | 5 users, 21 jobs and 21 files moved with **zero data loss**, verified automatically; **~9 minutes** of downtime ([runbook](docs/migration-runbook.md)) |
 | **Infrastructure** | **101 AWS resources, all Terraform**, in 7 modules plus a long-lived bootstrap layer; rebuilt from code in about 15 minutes and destroyed after every session |
-| **Security** | Checkov findings **51 → 0** (6 fixed, 45 accepted with written reasons); WAF, CloudTrail, flow logs, read-only containers; no AWS keys anywhere ([security](docs/security.md)) |
+| **Security** | Checkov findings **51 → 0** (6 fixed, 45 accepted with written reasons); Prowler CIS benchmark 60.6% → 63.5% account-wide; WAF, CloudTrail, GuardDuty, flow logs, read-only containers; no AWS keys anywhere ([security](docs/security.md)) |
 | **Delivery** | Every change tested, scanned (secrets, IaC, dependencies, image CVEs), previewed as a Terraform plan, deployed with automatic rollback, then smoke-tested |
 | **Cost** | Always-on AWS **$105 → $82/month (−22%)** with Fargate Spot; **~$4.50/month** as run here ([cost analysis](docs/cost-analysis.md)) |
-| **Operations** | 12 alarms, event alerts and a dashboard; scripted DR drills for database restore, file recovery and task failure ([operations](docs/operations.md), [DR](docs/disaster-recovery.md)) |
+| **Operations** | 12 alarms, event alerts and a dashboard. DR drills passed: **database restored in ~15 min with zero data loss**, deleted file recovered in 4 s, a crashed task healed automatically ([operations](docs/operations.md), [DR](docs/disaster-recovery.md)) |
 
 ---
 
@@ -107,7 +107,7 @@ Exported the database, copied the files to S3, restored the data inside the VPC 
 | | Before | After |
 | --- | --- | --- |
 | Checkov IaC findings | 51 failed | **0 failed** (6 fixed, 45 accepted with reasons) |
-| Prowler (CIS AWS benchmark) | _measured in Phase 8_ | _measured in Phase 8_ |
+| Prowler, CIS AWS benchmark 7.0 (whole account) | 60.6% | **63.5%** (the rest: [explained](docs/security.md#4-audit-results)) |
 | Container image (ECR scan) | 0 critical, 3 high | _next scan_ |
 
 STRIDE threat model, defence in depth from edge to account, CI security gates (Gitleaks, Checkov, pip-audit, ECR scan gate), and an incident runbook.
@@ -124,9 +124,9 @@ AWS costs more than one VM. The difference buys redundancy, managed backups, sca
 
 | Drill | Result |
 | --- | --- |
-| Database point-in-time restore (RPO / RTO) | _measured in Phase 10_ |
-| Deleted file recovered from S3 versioning | _measured in Phase 10_ |
-| Web task killed: 1 task vs 2 tasks | _measured in Phase 10_ |
+| Database point-in-time restore | **Passed**: all data identical; RPO 8 min 35 s, RTO ~15 min (target 1 hour) |
+| Deleted file recovered from S3 versioning | **Passed**: byte for byte in 4 s |
+| Web task killed | 1 task: ~28 s of errors, alarm emailed, healed automatically · 2 tasks: **no outage** |
 
 ## CI/CD
 

@@ -56,9 +56,15 @@ Measured with `./scripts/security/prowler-scan.sh before|after`.
 
 | | Before Phase 8 | After Phase 8 |
 | --- | --- | --- |
-| All checks passing | _to be measured_ | _to be measured_ |
-| CIS benchmark passing | _to be measured_ | _to be measured_ |
-| Critical / high failures | _to be measured_ | _to be measured_ |
+| All checks passing | 67.4% (638 / 946) | **69.4%** (718 / 1,035) |
+| CIS AWS benchmark 7.0 passing | 60.6% (103 / 170) | **63.5%** (113 / 178) |
+| Critical / high failures | 8 / 68 | 8 / 67 |
+
+Scanned on 2026-10-25, before and after applying Phase 8. Evidence: [before](evidence/phase8-prowler-before.png), [after](evidence/phase8-prowler-after.png).
+
+**How to read this:** Prowler scans the **whole AWS account**, and this account also hosts older projects: a public Lambda function and three public S3 buckets (one is a live static website). They account for most of the remaining critical findings, and they are why the account-wide S3 public access block stays off (section 5). The rest are documented trade-offs (public IPs instead of a NAT Gateway, AWS-managed keys, no AWS Config), AWS-managed roles that can't be edited, older task definition revisions, and one false positive. The number of checks rose because Phase 8 added resources (WAF, flow logs, GuardDuty), each with its own checks.
+
+The baseline scan also led to one more fix: the ECS and flow-log role trust policies now carry `aws:SourceAccount` / `aws:SourceArn` conditions (confused-deputy protection).
 
 ### Container image (Amazon ECR scan)
 
@@ -72,7 +78,7 @@ Fix applied: the Dockerfile now installs the latest Debian security updates and 
 
 ### Threat detection
 
-GuardDuty (threat detection) and Security Hub (posture score) are enabled through their 30-day free trials. Their findings are reviewed in section 7.
+GuardDuty (threat detection) was enabled on 2026-10-25 through its 30-day free trial. High-severity findings are emailed automatically (EventBridge → SNS, see `docs/operations.md`).
 
 ## 5. Accepted risks
 

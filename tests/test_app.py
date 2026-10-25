@@ -106,3 +106,59 @@ def test_path_traversal_filename_is_sanitised(logged_in):
     job = latest_job()
     assert ".." not in job.input_keys[0]
     assert job.input_names == ["passwd.txt"]
+
+
+def test_every_convertible_type_has_a_readable_label():
+    from app.gotenberg import CONVERTIBLE_EXTENSIONS
+    from app.main import SOURCE_TYPES
+
+    assert CONVERTIBLE_EXTENSIONS <= SOURCE_TYPES.keys()
+
+
+def test_dashboard_names_the_screen_and_uses_plain_status_words(client):
+    client.post("/register", data={"email": "words@example.com", "password": "password123"})
+    client.post("/convert", files={"file": ("notes.txt", b"hello", "text/plain")})
+    r = client.get("/dashboard")
+    assert ">Convert to PDF</h1>" in r.text
+    assert ">Your files</h2>" in r.text
+    assert "Text to PDF" in r.text
+    assert ">Ready<" in r.text
+    assert 'data-job="' in r.text
+
+
+# ---------- file names from every script ----------
+
+def test_non_latin_names_are_kept(logged_in):
+    from urllib.parse import quote
+
+    name = "Ọ̀rọ̀-ìpàdé-ọjọ́-Ajé 2026.docx"
+    logged_in.post("/convert", files={"file": (name, b"hello")})
+    job = latest_job()
+    assert job.input_names == [__import__("unicodedata").normalize("NFC", name)]
+    assert job.output_name.endswith("Ajé 2026.pdf")
+    assert job.input_keys[0].endswith("/0.docx")  # storage path stays plain ASCII
+    assert job.input_keys[0].isascii()
+
+    r = logged_in.get(f"/jobs/{job.id}/download")
+    header = r.headers["content-disposition"]
+    assert "filename*=UTF-8''" + quote(job.output_name, safe="") in header
+    assert 'filename="Oro-ipade-ojo-Aje 2026.pdf"' in header  # readable fallback for old clients
+
+
+def test_safe_filename_cases():
+    from app.filenames import safe_filename
+
+    assert safe_filename("../../etc/passwd.txt") == "passwd.txt"
+    assert safe_filename("C:\\Users\\Ngozi\\Desktop\\Kwangilar ƙasa.docx") == "Kwangilar ƙasa.docx"
+    assert safe_filename("合同-最终版.pdf") == "合同-最终版.pdf"
+    assert safe_filename("bad\x00name\n.txt") == "bad_name_.txt"
+    assert safe_filename("  ") == "file"
+    long = safe_filename("A" * 300 + ".pptx")
+    assert len(long) == 150 and long.endswith(".pptx")
+
+
+def test_ascii_fallback_never_empty():
+    from app.filenames import ascii_fallback
+
+    assert ascii_fallback("合同.pdf") == "document.pdf"
+    assert ascii_fallback("Café menu.pdf") == "Cafe menu.pdf"

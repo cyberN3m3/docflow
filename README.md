@@ -9,7 +9,7 @@
 | --- | --- |
 | **Migration** | 5 users, 21 jobs and 21 files moved with **zero data loss**, verified automatically; **~9 minutes** of downtime ([runbook](docs/migration-runbook.md)) |
 | **Infrastructure** | **101 AWS resources, all Terraform**, in 7 modules plus a long-lived bootstrap layer; rebuilt from code in about 15 minutes and destroyed after every session |
-| **Security** | Checkov findings **51 → 0** (6 fixed, 45 accepted with written reasons); Prowler CIS benchmark 60.6% → 63.5% account-wide; WAF, CloudTrail, GuardDuty, flow logs, read-only containers; no AWS keys anywhere ([security](docs/security.md)) |
+| **Security** | Checkov findings **51 → 0** (6 fixed, 45 accepted with written reasons); account audited with Prowler (CIS AWS benchmark) and every remaining finding triaged; WAF, CloudTrail, GuardDuty, flow logs, read-only containers; no AWS keys anywhere ([security](docs/security.md)) |
 | **Delivery** | Every change tested, scanned (secrets, IaC, dependencies, image CVEs), previewed as a Terraform plan, deployed with automatic rollback, then smoke-tested |
 | **Cost** | Always-on AWS **$105 → $82/month (−22%)** with Fargate Spot; **~$4.50/month** as run here ([cost analysis](docs/cost-analysis.md)) |
 | **Operations** | 12 alarms, event alerts and a dashboard. DR drills passed: **database restored in ~15 min with zero data loss**, deleted file recovered in 4 s, a crashed task healed automatically ([operations](docs/operations.md), [DR](docs/disaster-recovery.md)) |
@@ -45,27 +45,9 @@ flowchart LR
 
 ## The solution
 
-```mermaid
-flowchart LR
-    U[Users] -->|HTTPS| CF[CloudFront<br/>+ AWS WAF]
-    CF -->|secret header,<br/>CloudFront IPs only| ALB[Application<br/>Load Balancer]
-    subgraph VPC["VPC, 2 Availability Zones"]
-        ALB --> WEB[ECS Fargate<br/>web, 1-3 tasks]
-        WEB -->|jobs| SQS[(SQS + dead-letter queue)]
-        SQS --> WK[ECS Fargate Spot<br/>worker + Gotenberg, 1-4 tasks]
-        subgraph PRIV["Private subnets, no internet route"]
-            RDS[(RDS PostgreSQL)]
-        end
-        WEB --> RDS
-        WK --> RDS
-    end
-    WEB --> S3[(S3 files<br/>versioned)]
-    WK --> S3
-    SM[Secrets Manager] -.-> WEB
-    SM -.-> WK
-    CW[CloudWatch alarms<br/>+ dashboard] -.->|email| SNS[SNS]
-    GH[GitHub Actions<br/>OIDC, no keys] -->|scan, deploy| ECR[ECR] --> WEB
-```
+![DocFlow AWS architecture: users reach CloudFront and AWS WAF, then an ALB in front of ECS Fargate web tasks; jobs go through SQS to Fargate Spot workers; data in private RDS PostgreSQL and versioned S3; GitHub Actions deploys through ECR with OIDC](docs/architecture/aws-architecture.png)
+
+<sub>Diagram as code: `scripts/diagram/architecture.py`</sub>
 
 | Legacy problem | AWS design |
 | --- | --- |
@@ -128,6 +110,21 @@ AWS costs more than one VM. The difference buys redundancy, managed backups, sca
 | Deleted file recovered from S3 versioning | **Passed**: byte for byte in 4 s |
 | Web task killed | 1 task: ~28 s of errors, alarm emailed, healed automatically · 2 tasks: **no outage** |
 
+## Problems I hit and how I fixed them
+
+Real issues from building and running this project, each traced to a root cause and fixed in code:
+
+| Symptom | Root cause | Fix |
+| --- | --- | --- |
+| First AWS deploy returned **HTTP 503** | The image tag `yes` had been typed into Terraform's `image_tag` prompt | Derive the tag from Git (`git rev-parse --short`), so it can't be typed wrong |
+| GitHub Actions couldn't assume its AWS role | GitHub's 2026 OIDC token format includes immutable owner and repo IDs, so the trust policy never matched | Trust policies match the immutable IDs, which also stops a renamed or re-created repo from inheriting access |
+| Proxy kept sending traffic to a dead container after a rebuild | nginx resolved the container's address once, at start-up | Resolve through Docker DNS every 10 seconds |
+| A unit test failed on S3 download links | The links were signed with deprecated Signature Version 2 | Force SigV4 before any code reached AWS |
+| Deploy failed with `Service is DRAINING` | A merge landed while `terraform destroy` was running; the pipeline only checked the cluster | Deploy only when both services are ACTIVE |
+| Switching the worker to Fargate Spot failed on the live service | AWS needs a new deployment when a running service changes capacity provider | `force_new_deployment = true`, caught by the PR's plan against real state |
+| DR drill reported "no data" from the restored database | The script read CloudWatch Logs before the task's output arrived | Wait for the expected output line (up to 60 s) |
+| Turning on the account-wide S3 public block would have taken other projects offline | The AWS account is shared with older projects that serve public buckets | Checked the blast radius first; made the setting switchable and documented the exception |
+
 ## CI/CD
 
 ```
@@ -151,8 +148,10 @@ app/                 FastAPI web app, Celery worker, storage (local/S3), migrati
 infra/               Terraform: network, storage, queue, database, edge (CloudFront, ALB, WAF),
                      compute (ECS), monitoring; tests/ = offline plan with mock providers
 infra/bootstrap/     Long-lived layer: state bucket, ECR, GitHub OIDC roles, account security baseline
-scripts/             e2e.sh, push-image.sh, migrate/, security/prowler-scan.sh, cost/estimate.py, dr/
-docs/                migration runbook, security, cost analysis, operations, disaster recovery, evidence/
+scripts/             e2e.sh, push-image.sh, migrate/, security/prowler-scan.sh, cost/estimate.py, dr/,
+                     diagram/architecture.py (the architecture diagram, as code)
+docs/                migration runbook, security, cost analysis, operations, disaster recovery,
+                     architecture/, evidence/ (screenshots)
 .github/             CI/CD workflow, Dependabot
 ```
 
@@ -205,3 +204,5 @@ All screenshots are in [`docs/evidence/`](docs/evidence/).
 | 5 Running on AWS | [App live on CloudFront HTTPS](docs/evidence/phase5-app-on-aws.png) · [End-to-end test passing on AWS](docs/evidence/phase5-e2e-aws.png) |
 | 6 Migration | [Counts verified: zero data loss](docs/evidence/phase6-migration-verified.png) |
 | 7 CI/CD | [Pipeline green: test → build → scan → deploy](docs/evidence/phase7-pipeline-green.png) |
+| 8 Security | [Prowler before](docs/evidence/phase8-prowler-before.png) · [Prowler after](docs/evidence/phase8-prowler-after.png) · [WAF blocking an attack in the CI smoke test](docs/evidence/phase8-waf-blocked.png) |
+| 10 Monitoring and DR | [Dashboard](docs/evidence/phase10-dashboard.png) · [Alarm email: ALARM then OK](docs/evidence/phase10-alarm-email.png) · [Database restore drill passed](docs/evidence/phase10-db-restore-drill.png) |

@@ -15,9 +15,11 @@ TIMEOUT = httpx.Timeout(120.0, connect=5.0)
 
 def convert_to_pdf(filename: str, data: bytes) -> bytes:
     """Office document or image -> PDF via LibreOffice."""
+    # LibreOffice only needs the extension; a plain name avoids encoding surprises.
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else "bin"
     resp = httpx.post(
         f"{settings.gotenberg_url}/forms/libreoffice/convert",
-        files={"files": (filename, data)},
+        files={"files": (f"document.{ext}", data)},
         timeout=TIMEOUT,
     )
     resp.raise_for_status()
@@ -29,7 +31,7 @@ def merge_pdfs(files: list[tuple[str, bytes]]) -> bytes:
 
     Gotenberg merges in alphanumeric filename order, so we prefix an index.
     """
-    payload = [("files", (f"{i:03d}_{name}", data)) for i, (name, data) in enumerate(files)]
+    payload = [("files", (f"{i:03d}.pdf", data)) for i, (_name, data) in enumerate(files)]
     resp = httpx.post(
         f"{settings.gotenberg_url}/forms/pdfengines/merge",
         files=payload,

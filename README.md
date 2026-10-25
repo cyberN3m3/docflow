@@ -206,3 +206,4 @@ All screenshots are in [`docs/evidence/`](docs/evidence/).
 | 7 CI/CD | [Pipeline green: test → build → scan → deploy](docs/evidence/phase7-pipeline-green.png) |
 | 8 Security | [Prowler before](docs/evidence/phase8-prowler-before.png) · [Prowler after](docs/evidence/phase8-prowler-after.png) · [WAF blocking an attack in the CI smoke test](docs/evidence/phase8-waf-blocked.png) |
 | 10 Monitoring and DR | [Dashboard](docs/evidence/phase10-dashboard.png) · [Alarm email: ALARM then OK](docs/evidence/phase10-alarm-email.png) · [Database restore drill passed](docs/evidence/phase10-db-restore-drill.png) |
+| Interface redesign | [Before](docs/evidence/ui-before-desktop.png) · [After](docs/evidence/ui-after-desktop.png) · [Before on a phone](docs/evidence/ui-before-phone.png) · [After on a phone](docs/evidence/ui-after-phone.png) |

@@ -11,9 +11,10 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
-from .auth import hash_password, password_problem, verify_password
+from .auth import MIN_PASSWORD_LEN, hash_password, password_problem, verify_password
 from .config import settings
 from .db import db_is_healthy, get_db, init_db
+from .filenames import content_disposition, safe_filename
 from .gotenberg import CONVERTIBLE_EXTENSIONS
 from .models import Job, User
 from .storage import get_storage
@@ -73,13 +74,34 @@ def render(request: Request, name: str, **context):
     context["flashes"] = pop_flashes(request)
     context["app_name"] = settings.app_name
     context["max_upload_mb"] = settings.max_upload_mb
+    context["min_password_len"] = MIN_PASSWORD_LEN
     return templates.TemplateResponse(request, name, context)
 
 
-def safe_filename(name: str) -> str:
-    name = Path(name or "file").name
-    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).strip() or "file"
-    return name[:150]
+# Words people use for their files, shown instead of "convert" / "processing".
+SOURCE_TYPES = {
+    "doc": "Word", "docx": "Word", "odt": "OpenDocument text", "rtf": "Rich text", "txt": "Text",
+    "xls": "Excel", "xlsx": "Excel", "ods": "OpenDocument spreadsheet", "csv": "CSV",
+    "ppt": "PowerPoint", "pptx": "PowerPoint", "odp": "OpenDocument slides",
+    "jpg": "Image", "jpeg": "Image", "png": "Image",
+}
+STATUS_LABELS = {"queued": "Waiting", "done": "Ready", "failed": "Failed"}
+
+
+def job_kind(job: Job) -> str:
+    if job.kind == "merge":
+        return f"{len(job.input_names)} PDFs merged"
+    first = job.input_names[0] if job.input_names else ""
+    return f"{SOURCE_TYPES.get(extension(first), 'File')} to PDF"
+
+
+def job_status_label(job: Job) -> str:
+    if job.status == "processing":
+        return "Merging" if job.kind == "merge" else "Converting"
+    return STATUS_LABELS.get(job.status, job.status.capitalize())
+
+
+templates.env.globals.update(job_kind=job_kind, job_status_label=job_status_label)
 
 
 def extension(name: str) -> str:
@@ -153,7 +175,7 @@ def register(request: Request, email: str = Form(...), password: str = Form(...)
     db.commit()
     request.session.clear()
     request.session["user_id"] = user.id
-    flash(request, "Welcome to DocFlow!", "success")
+    flash(request, "Your account is ready. Add a document to make your first PDF.", "success")
     return RedirectResponse("/dashboard", status_code=303)
 
 
@@ -189,9 +211,14 @@ def dashboard(request: Request, db: Session = Depends(get_db)):
     jobs = db.scalars(
         select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc()).limit(50)
     ).all()
+    counts = {
+        "ready": sum(j.status == "done" for j in jobs),
+        "progress": sum(j.status in ("queued", "processing") for j in jobs),
+        "failed": sum(j.status == "failed" for j in jobs),
+    }
     return render(
-        request, "dashboard.html", user=user, jobs=jobs,
-        convertible=", ".join(sorted(CONVERTIBLE_EXTENSIONS)),
+        request, "dashboard.html", user=user, jobs=jobs, counts=counts,
+        accept=",".join(f".{ext}" for ext in sorted(CONVERTIBLE_EXTENSIONS)),
     )
 
 
@@ -214,7 +241,7 @@ async def convert(request: Request, file: UploadFile = File(...), db: Session = 
     job = Job(user_id=user.id, kind="convert", input_names=[name], output_name=f"{name.rsplit('.', 1)[0]}.pdf")
     db.add(job)
     db.flush()  # assigns job.id
-    key = f"inputs/{user.id}/{job.id}/0_{name}"
+    key = f"inputs/{user.id}/{job.id}/0.{extension(name)}"  # the name lives in the database, not the path
     get_storage().save(key, data)
     job.input_keys = [key]
     db.commit()
@@ -257,7 +284,7 @@ async def merge(request: Request, files: list[UploadFile] = File(...), db: Sessi
     storage = get_storage()
     keys = []
     for i, (name, data) in enumerate(zip(names, blobs)):
-        key = f"inputs/{user.id}/{job.id}/{i}_{name}"
+        key = f"inputs/{user.id}/{job.id}/{i}.pdf"
         storage.save(key, data)
         keys.append(key)
     job.input_keys = keys
@@ -292,7 +319,7 @@ def download(job_id: str, user: User = Depends(require_user), db: Session = Depe
     return Response(
         storage.read(job.output_key),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

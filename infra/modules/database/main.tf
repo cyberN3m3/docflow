@@ -16,6 +16,9 @@ resource "aws_db_parameter_group" "this" {
   parameter {
     name  = "rds.force_ssl"
     value = "1"
+    # AWS applies this one at the next reboot. PostgreSQL 16 on RDS already
+    # defaults to 1; setting it here makes the requirement explicit.
+    apply_method = "pending-reboot"
   }
 
   parameter {

@@ -1,198 +1,199 @@
-# DocFlow
+# DocFlow: migrating a single-server app to a secure, scalable AWS architecture
 
 [![CI](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml/badge.svg)](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml)
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/cybern3m3/docflow)
 
-A small-business document tool: convert Word, Excel, PowerPoint, text and image files to PDF, and merge PDFs. Users sign up, upload files, and download the results from their history.
+**DocFlow** is a document-to-PDF web app (convert Word, Excel, PowerPoint, text and images; merge PDFs) that I built, deployed the way many small businesses do (everything on one server), and then **migrated to AWS with Terraform**. Along the way I hardened, costed, monitored and DR-tested it.
 
-DocFlow is the subject of a **cloud migration case study**. It ships first as a typical "everything on one server" deployment (this repo, Phase 1), then gets migrated to a scalable, secure AWS architecture with Terraform (Phase 2).
+| | Result |
+| --- | --- |
+| **Migration** | 5 users, 21 jobs and 21 files moved with **zero data loss**, verified automatically; **~9 minutes** of downtime ([runbook](docs/migration-runbook.md)) |
+| **Infrastructure** | **101 AWS resources, all Terraform**, in 7 modules plus a long-lived bootstrap layer; rebuilt from code in about 15 minutes and destroyed after every session |
+| **Security** | Checkov findings **51 → 0** (6 fixed, 45 accepted with written reasons); WAF, CloudTrail, flow logs, read-only containers; no AWS keys anywhere ([security](docs/security.md)) |
+| **Delivery** | Every change tested, scanned (secrets, IaC, dependencies, image CVEs), previewed as a Terraform plan, deployed with automatic rollback, then smoke-tested |
+| **Cost** | Always-on AWS **$105 → $82/month (−22%)** with Fargate Spot; **~$4.50/month** as run here ([cost analysis](docs/cost-analysis.md)) |
+| **Operations** | 12 alarms, event alerts and a dashboard; scripted DR drills for database restore, file recovery and task failure ([operations](docs/operations.md), [DR](docs/disaster-recovery.md)) |
 
 ---
 
-## Phase 1: Legacy architecture (single server)
+## The problem
+
+The original deployment runs six containers on one VM with Docker Compose: Nginx, the FastAPI web app, a Celery worker, Gotenberg (LibreOffice), PostgreSQL and Redis.
 
 ```mermaid
 flowchart LR
     U[User browser] -->|HTTP :80| N[Nginx]
-    subgraph VM["One VM — docker compose"]
+    subgraph VM["One VM: docker compose"]
         N --> W[Web<br/>FastAPI]
         W -->|enqueue job| R[(Redis)]
         R --> K[Worker<br/>Celery]
-        K -->|convert / merge| G[Gotenberg<br/>LibreOffice]
+        K -->|convert / merge| G[Gotenberg]
         W --> P[(Postgres)]
         K --> P
-        W --- D[/Local disk<br/>uploads volume/]
+        W --- D[/Local disk/]
         K --- D
     end
 ```
 
-| Component | Role |
-|---|---|
-| **Web** (FastAPI) | Accounts, uploads, job history, downloads, `/healthz` |
-| **Worker** (Celery) | Picks jobs off the queue, calls Gotenberg, saves the PDF; retries with backoff if Gotenberg is down |
-| **Gotenberg** | Open-source conversion engine (LibreOffice + PDF tools) in a container |
-| **Postgres** | Users and job records (files are *not* stored in the DB) |
-| **Redis** | Job queue |
-| **Local disk** | Uploaded and generated files, shared by web and worker |
-
-### Why this needs migrating
-
-This setup works, and it's how a lot of real businesses run. These are its problems, and each one is fixed in Phase 2:
-
-| Problem | Impact | Phase 2 fix |
-|---|---|---|
-| Single server | Any crash, reboot or disk failure takes the whole product down | Multi-AZ ECS Fargate behind an ALB |
-| Files on local disk, shared by web and worker | Can't run a second server; disk fills up; files lost if the VM dies | S3 with lifecycle rules + presigned URLs |
-| Database on the same box | No automated backups, no failover, competes with the app for CPU/RAM | RDS PostgreSQL with automated backups |
-| Conversions compete with the website for CPU | A burst of uploads slows down every page | Separate worker service that autoscales on queue depth |
-| Secrets in a `.env` file on the server | Anyone with SSH sees every password | AWS Secrets Manager, injected at runtime |
-| Manual backups (`scripts/backup.sh`) stored on the same server | Backups depend on someone remembering, and die with the server | AWS Backup / RDS snapshots, cross-region copy |
-| Deploys by SSH + `git pull` | Risky, slow, no rollback | GitHub Actions → ECR → ECS with OIDC (no stored keys) |
-| No HTTPS, no monitoring | Credentials sent in clear text; outages found by customers | ACM certificate on ALB/CloudFront; CloudWatch alarms |
-| Downloads stream through the app server | Large files tie up web workers | Redirect to short-lived S3 presigned URLs |
-
-The code is already prepared for the move: all config comes from environment variables, storage sits behind one small interface (`app/storage.py`), the web and worker share an image, and there's a health check endpoint for the load balancer.
-
----
-
-## Run it
-
-### In GitHub Codespaces (recommended, nothing to install)
-
-The repo includes a dev container (`.devcontainer/`) with Python, Docker, Terraform and the AWS CLI, so the whole project, including the AWS migration, can be done from a browser.
-
-1. Click **Code → Codespaces → Create codespace on main** (or the badge above).
-2. When the terminal opens, start the legacy stack:
-   ```bash
-   docker compose up -d --build
-   docker compose ps
-   ```
-   A `.env` file is created from `.env.example` automatically. Change `SECRET_KEY` and the passwords in it for anything beyond local testing.
-3. Open the **Ports** tab, find port **80** and click the globe icon to open DocFlow.
-4. When you're done: `docker compose down`, then stop the codespace from github.com/codespaces to save your free hours.
-
-### On any machine with Docker
-
-```bash
-cp .env.example .env        # then edit the passwords and SECRET_KEY
-docker compose up -d --build
-```
-
-Open http://localhost, create an account, and convert something.
-
-### Useful commands
-
-```bash
-docker compose ps               # are all six services running?
-docker compose logs -f worker   # watch conversions happen
-curl localhost/healthz          # app + database health
-./scripts/e2e.sh                # full end-to-end test against the running stack
-./scripts/backup.sh             # back up the database and files (the legacy way)
-```
-
-### Without Docker (app development only)
-
-The web app runs on plain Python, but real conversions need Gotenberg, which runs as a container. Without it, jobs fail with "Conversion service unavailable".
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements-dev.txt
-export CELERY_EAGER=true        # run jobs inline, no Redis needed
-uvicorn app.main:app --reload
-```
-
-This uses SQLite and stores files in `./data/uploads`.
-
-### Tests
-
-```bash
-pip install -r requirements-dev.txt
-pytest
-```
-
-The tests cover sign-up and login, convert and merge flows, file-type and size validation, merge ordering, one user being unable to reach another's files, failed conversions, deletion, and filename sanitising. Gotenberg is mocked, so they run anywhere.
-
-### CI/CD pipeline
-
-Every change runs through GitHub Actions (`.github/workflows/ci.yml`). **GitHub holds no AWS access keys**: jobs that touch AWS get short-lived credentials through OIDC, and each role can only be used from one place.
-
-| Trigger | Jobs |
+| Problem | Impact |
 | --- | --- |
-| Pull request | Unit tests → end-to-end test of the full Docker Compose stack → `terraform fmt` and `validate` → **`terraform plan` posted as a PR comment** (read-only role, pull requests only) |
-| Merge to `main` | Same tests → build the image tagged with the commit → push to ECR → **security gate: blocks deployment if ECR's scan finds critical vulnerabilities** → deploy web and worker to ECS (rolls back automatically if unhealthy) → **smoke test** the live app with `e2e.sh` |
-| AWS environment destroyed (normal between sessions) | The image is still built, scanned and pushed; the deploy is skipped with a notice |
+| Single server | Any crash, reboot or disk failure takes the whole product down |
+| Database and files on the same disk; backups by hand | One bad disk loses everything |
+| Conversions compete with the website for CPU | A burst of uploads slows every page |
+| Secrets in a `.env` file; no HTTPS; no firewall | Anyone with SSH sees every password; logins sent in clear text |
+| Deploys by SSH and `git pull`; no monitoring | Risky deploys; outages found by customers |
 
-Who can do what:
+## The solution
+
+```mermaid
+flowchart LR
+    U[Users] -->|HTTPS| CF[CloudFront<br/>+ AWS WAF]
+    CF -->|secret header,<br/>CloudFront IPs only| ALB[Application<br/>Load Balancer]
+    subgraph VPC["VPC, 2 Availability Zones"]
+        ALB --> WEB[ECS Fargate<br/>web, 1-3 tasks]
+        WEB -->|jobs| SQS[(SQS + dead-letter queue)]
+        SQS --> WK[ECS Fargate Spot<br/>worker + Gotenberg, 1-4 tasks]
+        subgraph PRIV["Private subnets, no internet route"]
+            RDS[(RDS PostgreSQL)]
+        end
+        WEB --> RDS
+        WK --> RDS
+    end
+    WEB --> S3[(S3 files<br/>versioned)]
+    WK --> S3
+    SM[Secrets Manager] -.-> WEB
+    SM -.-> WK
+    CW[CloudWatch alarms<br/>+ dashboard] -.->|email| SNS[SNS]
+    GH[GitHub Actions<br/>OIDC, no keys] -->|scan, deploy| ECR[ECR] --> WEB
+```
+
+| Legacy problem | AWS design |
+| --- | --- |
+| Single server | Fargate tasks behind an ALB across two AZs; ECS replaces failed tasks; deployments roll back automatically |
+| Files on local disk | S3 with versioning and lifecycle rules; downloads are 5-minute presigned links |
+| Database on the same box | RDS PostgreSQL: private, encrypted, TLS required, 7-day point-in-time recovery |
+| Conversions compete with the website | Separate worker service that scales on queue depth, on Fargate Spot |
+| Secrets in `.env` | Secrets Manager, injected at start-up; RDS-managed rotating password |
+| No HTTPS, no firewall | CloudFront HTTPS + AWS WAF; ALB accepts CloudFront only |
+| SSH deploys | GitHub Actions → ECR (scan gate) → ECS, with OIDC roles scoped to `main` and PRs |
+| No monitoring | CloudWatch alarms, event alerts and a dashboard |
+
+**One image, two environments:** the same Docker image runs on the legacy server and on AWS. Only environment variables change (storage `local`/`s3`, broker Redis/SQS, database settings).
+
+## Key decisions and trade-offs
+
+| Decision | Why | Trade-off |
+| --- | --- | --- |
+| **No NAT Gateway**: tasks in public subnets with public IPs | Saves ~$66/month (two AZs) | Tasks have public IPs; security groups block all inbound except the ALB |
+| **CloudFront in front of the ALB** | Free HTTPS without a custom domain, edge caching, WAF attachment point | The origin hop is HTTP (documented as an accepted risk; production would add a domain and TLS to the origin) |
+| **ECS Fargate**, not EKS or EC2 | No servers or cluster to manage for two services | Less control than EC2; EKS would be overkill |
+| **SQS** instead of managed Redis | Serverless, nearly free, with a built-in dead-letter queue | Celery's SQS transport has fewer features than Redis |
+| **Worker on Fargate Spot** | ~65% cheaper; jobs are idempotent and `acks_late` re-queues interrupted ones | Possible 2-minute interruptions (alerted, auto-replaced) |
+| **Destroy after every session** | A portfolio environment shouldn't cost money while idle | 15-minute rebuild; data doesn't persist between sessions |
+| **Accepted risks written in the code** (`#checkov:skip=...:reason`) | Every exception is reviewed in a PR and the build fails on anything new | Requires discipline to keep the reasons true |
+
+## Results
+
+### Migration ([runbook](docs/migration-runbook.md))
+
+Exported the database, copied the files to S3, restored the data inside the VPC with a one-off Fargate task (the database is never exposed), then verified users, jobs per status and every finished file automatically.
+
+| Users | Jobs | Files | Data lost | Downtime |
+| --- | --- | --- | --- | --- |
+| 5 → 5 | 21 → 21 | 21 → 21 | **0** | **~9 min** |
+
+### Security ([details](docs/security.md))
+
+| | Before | After |
+| --- | --- | --- |
+| Checkov IaC findings | 51 failed | **0 failed** (6 fixed, 45 accepted with reasons) |
+| Prowler (CIS AWS benchmark) | _measured in Phase 8_ | _measured in Phase 8_ |
+| Container image (ECR scan) | 0 critical, 3 high | _next scan_ |
+
+STRIDE threat model, defence in depth from edge to account, CI security gates (Gitleaks, Checkov, pip-audit, ECR scan gate), and an incident runbook.
+
+### Cost ([details](docs/cost-analysis.md))
+
+| Legacy VM | AWS always on, before | AWS always on, after | AWS as run here (40 h/month) |
+| --- | --- | --- | --- |
+| $24 | $105 | **$82** | **~$4.50** |
+
+AWS costs more than one VM. The difference buys redundancy, managed backups, scaling, a WAF and zero servers to patch. The cost analysis says when that's worth it, and when it isn't.
+
+### Reliability ([DR plan](docs/disaster-recovery.md))
+
+| Drill | Result |
+| --- | --- |
+| Database point-in-time restore (RPO / RTO) | _measured in Phase 10_ |
+| Deleted file recovered from S3 versioning | _measured in Phase 10_ |
+| Web task killed: 1 task vs 2 tasks | _measured in Phase 10_ |
+
+## CI/CD
+
+```
+Pull request:  unit tests → end-to-end (full Docker stack) → terraform fmt/validate/test
+               → security scans (Gitleaks, Checkov, pip-audit) → terraform plan posted as a comment
+Merge to main: the same checks → build image (tag = commit) → push to ECR → scan gate (blocks CRITICAL)
+               → deploy web + worker (waits for healthy, rolls back if not) → smoke test the live site
+```
 
 | Role | Can be assumed by | Allowed to |
 | --- | --- | --- |
-| `docflow-github-deploy` | Only workflows on the `main` branch of this repo | Push DocFlow images, register task definitions, update the two DocFlow services |
-| `docflow-github-plan` | Only pull-request workflows of this repo | Read the Terraform state and the lookups the plan needs. No access to data, files or secrets. |
+| `docflow-github-deploy` | Workflows on `main` of this repo only (immutable repo ID) | Push DocFlow images, register task definitions, update the two services |
+| `docflow-github-plan` | Pull-request workflows of this repo only | Read the Terraform state and plan lookups. No data, files or secrets |
 
-**Terraform owns the infrastructure; the pipeline owns which image is running.** `terraform apply` stays manual (from a codespace), a deliberate cost-control decision: the environment is destroyed between sessions and rebuilt on demand. Dependabot (`.github/dependabot.yml`) opens weekly pull requests for Python, Actions, Docker and Terraform updates, and each one goes through the same pipeline.
+`terraform apply` stays manual from a codespace: a deliberate cost-control decision for an environment that is destroyed after every session.
 
-## Configuration: one image, two environments
+## Repository map
 
-The same Docker image runs on the legacy server and on AWS. Only environment variables change:
+```
+app/                 FastAPI web app, Celery worker, storage (local/S3), migration CLI
+infra/               Terraform: network, storage, queue, database, edge (CloudFront, ALB, WAF),
+                     compute (ECS), monitoring; tests/ = offline plan with mock providers
+infra/bootstrap/     Long-lived layer: state bucket, ECR, GitHub OIDC roles, account security baseline
+scripts/             e2e.sh, push-image.sh, migrate/, security/prowler-scan.sh, cost/estimate.py, dr/
+docs/                migration runbook, security, cost analysis, operations, disaster recovery, evidence/
+.github/             CI/CD workflow, Dependabot
+```
 
-| Setting | Legacy (Docker Compose) | AWS (ECS Fargate) |
-| --- | --- | --- |
-| File storage | `STORAGE_BACKEND=local`, files on the uploads volume | `STORAGE_BACKEND=s3`, `S3_BUCKET` |
-| Downloads | Streamed through the web server | Redirect to a 5-minute S3 presigned link (`DOWNLOAD_URL_EXPIRY_SECONDS`) |
-| Job queue | `REDIS_URL` | `CELERY_BROKER_URL=sqs://`, `SQS_QUEUE_URL` (predefined queue, so no permission to create queues is needed) |
-| Database | `DATABASE_URL` | `DB_HOST`, `DB_NAME`, `DB_USER`, plus `DB_PASSWORD` injected from Secrets Manager; SSL required |
-| AWS credentials | Not used | From the ECS task role; nothing stored |
+## Run it
 
-The app checks its configuration at start-up and stops with a clear error if a required setting is missing.
-
-## Deploy to AWS
-
-Everything is built with Terraform from `infra/` (see the roadmap for what each phase adds). From a codespace signed in to AWS:
+**Legacy stack, in GitHub Codespaces** (nothing to install): click **Code → Codespaces → Create codespace**, then:
 
 ```bash
-export TF_VAR_image_tag=$(git rev-parse --short origin/main)   # the image CI built for main
+docker compose up -d --build
+./scripts/e2e.sh            # full end-to-end test against the running stack
+```
+
+Open the **Ports** tab → port 80. Tests: `pip install -r requirements-dev.txt && pytest`.
+
+**AWS** (from a codespace signed in with `aws sso login`):
+
+```bash
+export TF_VAR_image_tag=$(git rev-parse --short origin/main)   # the image CI built
+export TF_VAR_alert_email=you@example.com                      # optional: alarm emails
 cd infra
-terraform plan -out tfplan               # read it
-terraform apply tfplan                   # about 15 minutes
-terraform output app_url                 # open it
+terraform plan -out tfplan && terraform apply tfplan           # about 15 minutes
 ../scripts/e2e.sh "$(terraform output -raw app_url)"
-terraform destroy                        # at the end of every session
+terraform destroy                                              # at the end of every session
 ```
-
-## Project layout
-
-```
-app/
-  main.py        routes: auth, convert, merge, status, download, delete, /healthz
-  worker.py      Celery app + process_job task (retries, failure handling)
-  gotenberg.py   conversion client
-  storage.py     file storage (LocalStorage now, S3Storage after migration)
-  models.py      User, Job
-  db.py          SQLAlchemy engine/session, health check
-  auth.py        bcrypt password hashing
-  config.py      settings from environment variables
-  templates/     Jinja2 pages
-  static/        CSS
-tests/           pytest suite
-nginx/           reverse proxy config
-scripts/         backup.sh, e2e.sh (end-to-end test), push-image.sh,
-                 migrate/ (one-off AWS tasks, count comparison)
-.devcontainer/   Codespaces environment (Python, Docker, Terraform, AWS CLI)
-.github/         CI workflow
-docker-compose.yml, Dockerfile, .env.example
-```
-
----
 
 ## Roadmap
 
-- [x] **Phase 0–1:** App, legacy single-server deployment, and a secured AWS account (MFA, budget alerts, SSO with no access keys)
+- [x] **Phase 0–1:** App, legacy single-server deployment, secured AWS account (MFA, budget alerts, SSO with no access keys)
 - [x] **Phase 2:** Terraform foundations: encrypted, versioned state bucket with native locking
-- [x] **Phase 3:** Network and data layer: VPC with no NAT Gateway, S3, SQS with dead-letter queue, private RDS, Secrets Manager, ECR
+- [x] **Phase 3:** Network and data: VPC without a NAT Gateway, S3, SQS with dead-letter queue, private RDS, Secrets Manager, ECR
 - [x] **Phase 4:** Cloud-ready app: S3 storage with presigned downloads, SQS broker, database settings from Secrets Manager
-- [x] **Phase 5:** ECS Fargate (web + worker with a Gotenberg sidecar), load balancer reachable only through CloudFront (HTTPS), autoscaling
-- [x] **Phase 6:** The migration: 5 users, 21 jobs and 21 files moved with zero data loss and ~9 minutes of downtime ([runbook](docs/migration-runbook.md))
-- [x] **Phase 7:** CI/CD with GitHub Actions and OIDC: no stored AWS keys, plan previews on PRs, scan-gated deploys with smoke tests
-- [ ] **Phase 8:** Security audit (Prowler, CIS benchmark) and hardening, with before/after scores
-- [ ] **Phase 9:** Cost comparison (VM vs AWS) and optimisation
-- [ ] **Phase 10:** Monitoring, alerting and disaster recovery drill
+- [x] **Phase 5:** ECS Fargate (web + worker with Gotenberg sidecar), ALB reachable only through CloudFront, autoscaling
+- [x] **Phase 6:** The migration: zero data loss, ~9 minutes of downtime
+- [x] **Phase 7:** CI/CD with GitHub Actions and OIDC: plan previews, scan-gated deploys, smoke tests
+- [x] **Phase 8:** Security: threat model, WAF, account baseline, CI security gates, Checkov 51 → 0, Prowler audit
+- [x] **Phase 9:** Cost analysis and optimisation: Fargate Spot (−22%)
+- [x] **Phase 10:** Monitoring, alerting and disaster recovery drills
+- [x] **Phase 11:** Case study write-up
+
+**Next:** custom domain with TLS to the origin, Multi-AZ database, cross-region backups, Graviton (ARM64) images, and actions pinned to commit SHAs.
+
+## Evidence
+
+Screenshots in [`docs/evidence/`](docs/evidence/): the legacy stack, the app live on AWS, the migration verification, the green pipeline, the security audit, the monitoring dashboard and alarm email, and the DR drills.

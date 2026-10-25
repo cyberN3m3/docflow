@@ -2,7 +2,8 @@
 <html lang="en" class="no-js">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f2f2f0">
   <meta name="description" content="DocFlow converts Word, Excel, PowerPoint, text and image files to PDF and merges PDFs.">
   <title>{% block title %}{{ app_name }}{% endblock %}</title>
   <link rel="icon" href="/static/favicon.svg" type="image/svg+xml">
@@ -22,14 +23,15 @@
     </a>
     {% if user %}
       <div class="account">
-        <span class="account-email">{{ user.email }}</span>
-        <form method="post" action="/logout"><button class="btn btn-outline btn-sm">Log out</button></form>
+        <span class="account-email" title="{{ user.email }}">{{ user.email }}</span>
+        <form method="post" action="/logout"><button class="btn btn-secondary btn-sm">Log out</button></form>
       </div>
     {% endif %}
   </header>
   <main id="main" class="sheet {% block sheet_class %}{% endblock %}">
     {% block content %}{% endblock %}
   </main>
+  {% block after %}{% endblock %}
   {% block scripts %}{% endblock %}
 </body>
 </html>

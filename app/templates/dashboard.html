@@ -1,38 +1,47 @@
 {% extends "base.html" %}
-{% block title %}Files · {{ app_name }}{% endblock %}
+{% block title %}Convert to PDF · {{ app_name }}{% endblock %}
+
+{% macro status_icon(kind) -%}
+  {%- if kind == 'ready' -%}
+    <svg class="status-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
+  {%- elif kind == 'progress' -%}
+    <svg class="status-icon spinner" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8" opacity=".22"/><path d="M20 12a8 8 0 0 0-8-8"/></svg>
+  {%- elif kind == 'waiting' -%}
+    <svg class="status-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8"/><path d="M12 8v4.2l2.6 1.6"/></svg>
+  {%- else -%}
+    <svg class="status-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.8v5"/><path d="M12 16.4v.01"/></svg>
+  {%- endif -%}
+{%- endmacro %}
+
+{% macro plural(n, word) %}{{ n }} {{ word }}{{ '' if n == 1 else 's' }}{% endmacro %}
+
 {% block content %}
 <div class="page{% if not jobs %} is-empty{% endif %}" data-max-mb="{{ max_upload_mb }}">
-  <div class="title-row">
-    <div>
-      <h1>Files</h1>
-      <p class="lede">
-        {% if jobs %}
-          {{ counts.ready }} ready to download · {{ counts.progress }} in progress · {{ counts.failed }} failed
-        {% else %}
-          Convert a document to PDF, or merge PDFs into one.
-        {% endif %}
-      </p>
-    </div>
-    <div class="title-actions js-only">
-      <button type="button" class="btn btn-outline" data-pick="merge">Merge PDFs</button>
-      <button type="button" class="btn btn-primary" data-pick="convert">Convert to PDF</button>
-    </div>
-  </div>
 
-  {% for f in flashes %}
-    <div class="notice notice-{{ f.kind }}" role="{{ 'alert' if f.kind == 'error' else 'status' }}">{{ f.message }}</div>
-  {% endfor %}
-  <div class="notice notice-error" id="drop-error" role="alert" hidden></div>
+  <section class="tool" aria-labelledby="tool-heading">
+    <h1 id="tool-heading">Convert to PDF</h1>
+    <p class="tool-lede">Word, Excel, PowerPoint, text and images become PDFs. Several PDFs merge into one.</p>
 
-  <section class="make" aria-label="Make a PDF">
-    <button type="button" class="drop js-only" id="dropzone" aria-describedby="types">
-      <svg class="drop-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M4 15v4.5h16V15"/></svg>
-      <span class="drop-text">
-        <span class="drop-title" id="drop-title"><span class="for-pointer">Drop files anywhere on this page, or choose them</span><span class="for-touch">Choose files to convert or merge</span></span>
-        <span class="drop-hint" id="types">One document converts to PDF: Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, JPG or PNG, up to {{ max_upload_mb }} MB. Two to twenty PDFs merge into one.</span>
-      </span>
-    </button>
-    <input type="file" id="any-files" class="visually-hidden" multiple accept="{{ accept }},.pdf" tabindex="-1" aria-hidden="true">
+    <div class="upload-card js-only" id="upload-card">
+      <span class="fold" aria-hidden="true"></span>
+      <div class="upload-art" aria-hidden="true">
+        <svg viewBox="0 0 132 64" width="132" height="64" fill="none" stroke-linejoin="round">
+          <g stroke="#9aa3a8" stroke-width="1.5"><path d="M10 4h26l12 12v44H10z" fill="#fff"/><path d="M36 4v12h12"/></g>
+          <rect x="4" y="38" width="34" height="13" rx="3" fill="#2b579a"/>
+          <text x="21" y="47.6" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" font-weight="700" fill="#fff">DOCX</text>
+          <g stroke="#1b6c80" stroke-width="1.8" stroke-linecap="round"><path d="M57 32h18"/><path d="M70 27l5 5-5 5"/></g>
+          <g stroke="#9aa3a8" stroke-width="1.5"><path d="M86 4h26l12 12v44H86z" fill="#fff"/><path d="M112 4v12h12"/></g>
+          <rect x="80" y="38" width="28" height="13" rx="3" fill="#c8312b"/>
+          <text x="94" y="47.6" text-anchor="middle" font-family="IBM Plex Sans, system-ui, sans-serif" font-size="8.5" font-weight="700" fill="#fff">PDF</text>
+        </svg>
+      </div>
+      <p class="upload-title"><span class="for-pointer">Drag and drop files here, or choose them</span><span class="for-touch">Choose a file to convert</span></p>
+      <p class="upload-limit" id="types">Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, JPG or PNG · up to {{ max_upload_mb }} MB each</p>
+      <div class="upload-actions">
+        <button type="button" class="btn btn-primary btn-lg" data-pick="convert"><span class="btn-label">Choose a document</span></button>
+        <button type="button" class="btn btn-secondary btn-lg" data-pick="merge">Merge PDFs</button>
+      </div>
+    </div>
 
     <div class="fallback">
       <form id="convert-form" method="post" action="/convert" enctype="multipart/form-data">
@@ -45,84 +54,113 @@
         <label for="merge-files">Merge PDFs</label>
         <span class="field-hint">Choose 2 to 20 PDFs. They're joined in the order you choose them.</span>
         <input id="merge-files" type="file" name="files" accept="application/pdf,.pdf" multiple required>
-        <button class="btn btn-outline">Merge PDFs</button>
+        <button class="btn btn-secondary">Merge PDFs</button>
       </form>
     </div>
+    <input type="file" id="any-files" class="visually-hidden" multiple accept="{{ accept }},.pdf" tabindex="-1" aria-hidden="true">
 
     <section class="merge" id="merge-panel" aria-labelledby="merge-heading" hidden>
-      <h2 id="merge-heading" tabindex="-1">Merge <span data-merge-count>0</span> PDFs</h2>
-      <p class="muted">They're joined in this order. Move a file to change it.</p>
+      <div class="merge-head">
+        <h2 id="merge-heading" tabindex="-1">Merge PDFs</h2>
+        <p class="muted">They're joined from top to bottom. Move a file to change the order.</p>
+      </div>
       <ol class="merge-list" id="merge-list"></ol>
       <div class="merge-actions">
-        <button type="button" class="btn btn-outline" data-merge-add>Add PDFs</button>
+        <button type="button" class="btn btn-secondary" data-merge-add>Add PDFs</button>
         <span class="spacer"></span>
         <button type="button" class="btn btn-ghost" data-merge-cancel>Cancel</button>
-        <button type="button" class="btn btn-primary" data-merge-submit>Merge PDFs</button>
+        <button type="button" class="btn btn-primary" data-merge-submit><span class="btn-label">Merge PDFs</span></button>
       </div>
     </section>
   </section>
 
   <section class="files-section" aria-labelledby="files-heading">
-    <h2 id="files-heading" class="visually-hidden">Your files</h2>
+    <div class="files-head">
+      <h2 id="files-heading">Your files</h2>
+      {% if jobs %}
+        <p class="lede">
+          <span data-count="ready">{{ counts.ready }}</span> ready to download · <span data-count="progress">{{ counts.progress }}</span> in progress · <span data-count="failed">{{ counts.failed }}</span> failed
+        </p>
+      {% endif %}
+    </div>
+
     {% if jobs %}
-      <div class="tabs js-only" role="tablist" aria-label="Show files">
-        <button type="button" role="tab" class="tab" aria-selected="true" data-filter="all">All <span class="count">{{ jobs | length }}</span></button>
-        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="ready">Ready <span class="count">{{ counts.ready }}</span></button>
-        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="progress">In progress <span class="count">{{ counts.progress }}</span></button>
-        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="failed">Failed <span class="count">{{ counts.failed }}</span></button>
-      </div>
+    <div class="tabs js-only" role="tablist" aria-label="Show files">
+      <button type="button" role="tab" class="tab" aria-selected="true" data-filter="all">All <span class="count" data-count="all">{{ jobs | length }}</span></button>
+      <button type="button" role="tab" class="tab" aria-selected="false" data-filter="ready">Ready <span class="count" data-count="ready">{{ counts.ready }}</span></button>
+      <button type="button" role="tab" class="tab" aria-selected="false" data-filter="progress">In progress <span class="count" data-count="progress">{{ counts.progress }}</span></button>
+      <button type="button" role="tab" class="tab" aria-selected="false" data-filter="failed">Failed <span class="count" data-count="failed">{{ counts.failed }}</span></button>
+      <span class="tab-indicator" aria-hidden="true"></span>
+    </div>
 
-      <div class="toolbar">
-        <label class="search js-only">
-          <span class="visually-hidden">Search files</span>
-          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input type="search" id="search" placeholder="Search by file name" autocomplete="off">
-        </label>
-        <span class="muted num" id="shown" aria-live="polite">{{ jobs | length }} files{% if jobs | length >= 50 %} (your latest 50){% endif %}</span>
-      </div>
+    <div class="toolbar">
+      <label class="search js-only">
+        <span class="visually-hidden">Search files</span>
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+        <input type="search" id="search" placeholder="Search by file name" autocomplete="off" enterkeyhint="search">
+      </label>
+      <span class="muted num" id="shown" aria-live="polite">{{ plural(jobs | length, 'file') }}{% if jobs | length >= 50 %} (your latest 50){% endif %}</span>
+    </div>
 
-      <div class="table-wrap">
-        <table class="files">
-          <thead>
-            <tr>
-              <th scope="col">File</th>
-              <th scope="col" class="col-kind">Type</th>
-              <th scope="col" class="col-status">Status</th>
-              <th scope="col" class="col-when num">Created</th>
-              <th scope="col" class="col-actions"><span class="visually-hidden">Actions</span></th>
-            </tr>
-          </thead>
-          <tbody>
-          {% for job in jobs %}
-            {% set group = 'ready' if job.status == 'done' else ('failed' if job.status == 'failed' else 'progress') %}
-            <tr data-job="{{ job.id }}" data-status="{{ job.status }}" data-group="{{ group }}" data-search="{{ (job.output_name ~ ' ' ~ (job.input_names | join(' '))) | lower }}">
-              <td class="file">
-                <span class="file-name">{{ job.output_name }}</span>
-                <span class="file-src">from {{ job.input_names | join(", ") | truncate(90) }}</span>
-                {% if job.error %}<span class="file-error">Couldn't make this PDF: {{ job.error }}</span>{% endif %}
-              </td>
-              <td class="kind">{{ job_kind(job) }}</td>
-              <td class="status"><span class="pill pill-{{ group }}{% if job.status == 'queued' %} pill-waiting{% endif %}">{{ job_status_label(job) }}</span></td>
-              <td class="when num"><time datetime="{{ job.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></td>
-              <td class="row-actions">
-                {% if job.status == "done" %}<a class="btn btn-outline btn-sm" href="/jobs/{{ job.id }}/download">Download</a>{% endif %}
-                <form method="post" action="/jobs/{{ job.id }}/delete">
-                  <button class="btn-icon" data-confirm aria-label="Delete {{ job.output_name }}" title="Delete">
-                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
-                    <span class="confirm-text">Delete</span>
-                  </button>
-                </form>
-              </td>
-            </tr>
-          {% endfor %}
-            <tr class="no-match" hidden><td colspan="5"><div class="empty-box">No files match this view.</div></td></tr>
-          </tbody>
-        </table>
-      </div>
+    <div class="table-wrap">
+      <table class="files">
+        <thead>
+          <tr>
+            <th scope="col">File</th>
+            <th scope="col" class="col-kind">Type</th>
+            <th scope="col" class="col-status">Status</th>
+            <th scope="col" class="col-when num">Created</th>
+            <th scope="col" class="col-actions"><span class="visually-hidden">Actions</span></th>
+          </tr>
+        </thead>
+        <tbody>
+        {% for job in jobs %}
+          {% set group = 'ready' if job.status == 'done' else ('failed' if job.status == 'failed' else 'progress') %}
+          {% set look = 'waiting' if job.status == 'queued' else group %}
+          <tr data-job="{{ job.id }}" data-status="{{ job.status }}" data-kind="{{ job.kind }}" data-group="{{ group }}" data-search="{{ (job.output_name ~ ' ' ~ (job.input_names | join(' '))) | lower }}">
+            <td class="file">
+              <span class="file-name" title="{{ job.output_name }}">{{ job.output_name }}</span>
+              <span class="file-src" title="{{ job.input_names | join(', ') }}">from {{ job.input_names | join(", ") | truncate(90) }}</span>
+              {% if job.error %}{% set err = job.error | striptags %}<span class="file-error" title="{{ err }}">Couldn't make this PDF: {{ err }}</span>{% endif %}
+            </td>
+            <td class="kind">{{ job_kind(job) }}</td>
+            <td class="status-cell"><span class="status status-{{ look }}">{{ status_icon(look) }}<span class="status-label">{{ job_status_label(job) }}</span></span></td>
+            <td class="when num"><time datetime="{{ job.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></td>
+            <td class="row-actions">
+              {% if job.status == "done" %}<a class="btn btn-secondary btn-sm" href="/jobs/{{ job.id }}/download">Download</a>{% endif %}
+              <form method="post" action="/jobs/{{ job.id }}/delete" class="delete-form">
+                <button class="hold-delete" aria-label="Delete {{ job.output_name }} (press and hold)" title="Press and hold to delete">
+                  <span class="hold-fill" aria-hidden="true"></span>
+                  <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+                </button>
+              </form>
+            </td>
+          </tr>
+        {% endfor %}
+          <tr class="no-match" hidden><td colspan="5"><p class="muted">No files match this view.</p></td></tr>
+        </tbody>
+      </table>
+    </div>
     {% else %}
-      <div class="empty-box">No files yet. Your PDFs will appear here, ready to download.</div>
+      <p class="empty-note">Nothing here yet. Your PDFs will appear here, ready to download.</p>
     {% endif %}
   </section>
 </div>
+
+<template id="status-tpl">
+  <span class="status status-ready" data-look="ready">{{ status_icon('ready') }}<span class="status-label">Ready</span></span>
+  <span class="status status-failed" data-look="failed">{{ status_icon('failed') }}<span class="status-label">Failed</span></span>
+  <span class="status status-progress" data-look="progress">{{ status_icon('progress') }}<span class="status-label">Converting</span></span>
+</template>
 {% endblock %}
+
+{% block after %}
+<ol class="toaster" id="toaster" aria-label="Notifications">
+  {% for f in flashes %}
+    <li class="toast toast-{{ f.kind }}" role="{{ 'alert' if f.kind == 'error' else 'status' }}"><span class="toast-text">{{ f.message }}</span><button type="button" class="toast-close" aria-label="Dismiss">
+      <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18"/></svg></button></li>
+  {% endfor %}
+</ol>
+{% endblock %}
+
 {% block scripts %}<script src="/static/app.js" defer></script>{% endblock %}

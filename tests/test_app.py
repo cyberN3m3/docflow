@@ -119,7 +119,8 @@ def test_dashboard_names_the_screen_and_uses_plain_status_words(client):
     client.post("/register", data={"email": "words@example.com", "password": "password123"})
     client.post("/convert", files={"file": ("notes.txt", b"hello", "text/plain")})
     r = client.get("/dashboard")
-    assert "<h1>Files</h1>" in r.text
+    assert ">Convert to PDF</h1>" in r.text
+    assert ">Your files</h2>" in r.text
     assert "Text to PDF" in r.text
     assert ">Ready<" in r.text
     assert 'data-job="' in r.text

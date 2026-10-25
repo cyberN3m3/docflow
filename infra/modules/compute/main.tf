@@ -3,16 +3,24 @@
 
 resource "aws_ecs_cluster" "this" {
   name = var.name
+
+  #checkov:skip=CKV_AWS_65:Container Insights is switched on in Phase 10 (monitoring).
 }
 
 resource "aws_cloudwatch_log_group" "web" {
   name              = "/ecs/${var.name}/web"
   retention_in_days = var.log_retention_days
+
+  #checkov:skip=CKV_AWS_158:Encrypted with CloudWatch's AWS-managed key; a customer-managed KMS key costs $1/month.
+  #checkov:skip=CKV_AWS_338:7 days in a demo; production compliance would need 1 year.
 }
 
 resource "aws_cloudwatch_log_group" "worker" {
   name              = "/ecs/${var.name}/worker"
   retention_in_days = var.log_retention_days
+
+  #checkov:skip=CKV_AWS_158:Encrypted with CloudWatch's AWS-managed key; a customer-managed KMS key costs $1/month.
+  #checkov:skip=CKV_AWS_338:7 days in a demo; production compliance would need 1 year.
 }
 
 locals {
@@ -29,6 +37,11 @@ locals {
     { name = "COOKIE_SECURE", value = "true" },
     { name = "MAX_UPLOAD_MB", value = "20" },
   ]
+
+  # Read-only containers: an attacker who gets code execution can't modify
+  # the app or drop tools on disk. /tmp is the only writable place (FastAPI
+  # stores large uploads there while they are being received).
+  tmp_mount = [{ sourceVolume = "tmp", containerPath = "/tmp", readOnly = false }]
 
   # Secrets are injected by ECS at start-up, straight from Secrets Manager.
   # They never appear in the task definition, the console or Terraform code.
@@ -49,6 +62,11 @@ resource "aws_ecs_task_definition" "web" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.web.arn
 
+  # Scratch space that disappears with the task.
+  volume {
+    name = "tmp"
+  }
+
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "X86_64"
@@ -62,6 +80,9 @@ resource "aws_ecs_task_definition" "web" {
     environment  = local.app_environment
     secrets      = local.app_secrets
 
+    readonlyRootFilesystem = true
+    mountPoints            = local.tmp_mount
+
     logConfiguration = {
       logDriver = "awslogs"
       options = {
@@ -74,6 +95,7 @@ resource "aws_ecs_task_definition" "web" {
 }
 
 resource "aws_ecs_service" "web" {
+  #checkov:skip=CKV_AWS_333:Public IP is needed to reach ECR and AWS APIs without a $33/month NAT Gateway. Inbound traffic is still blocked by the security group.
   name            = "web"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.web.arn
@@ -120,6 +142,12 @@ resource "aws_ecs_task_definition" "worker" {
   execution_role_arn       = aws_iam_role.execution.arn
   task_role_arn            = aws_iam_role.worker.arn
 
+  #checkov:skip=CKV_AWS_336:The worker container is read-only; Gotenberg (LibreOffice) must write its profile and temp files, so it stays writable.
+
+  volume {
+    name = "tmp"
+  }
+
   runtime_platform {
     operating_system_family = "LINUX"
     cpu_architecture        = "X86_64"
@@ -133,6 +161,9 @@ resource "aws_ecs_task_definition" "worker" {
       command     = ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
       environment = concat(local.app_environment, [{ name = "GOTENBERG_URL", value = "http://localhost:3000" }])
       secrets     = local.app_secrets
+
+      readonlyRootFilesystem = true
+      mountPoints            = local.tmp_mount
 
       # Start Gotenberg first. Containers in one Fargate task share
       # "localhost", so the worker reaches it at localhost:3000.
@@ -165,6 +196,7 @@ resource "aws_ecs_task_definition" "worker" {
 }
 
 resource "aws_ecs_service" "worker" {
+  #checkov:skip=CKV_AWS_333:Public IP is needed to reach ECR and AWS APIs without a $33/month NAT Gateway. Inbound traffic is still blocked by the security group.
   name            = "worker"
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.worker.arn

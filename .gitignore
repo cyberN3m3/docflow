@@ -17,3 +17,6 @@ crash.log
 infra/backend.hcl
 # Migration working files contain real user data: never commit them
 migration/
+
+# Security scan reports describe the AWS account: never commit them
+security-reports/

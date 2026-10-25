@@ -67,6 +67,34 @@ jobs:
         working-directory: infra
         run: terraform init -backend=false && terraform validate
   # ---------------------------------------------------------------------------
+  # Security scans (Phase 8). Any finding fails the build. Accepted risks are
+  # skipped in the code itself (#checkov:skip=... with a reason), so every
+  # exception is reviewed in a pull request. See docs/security.md.
+  # ---------------------------------------------------------------------------
+  security:
+    name: Security scans
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # Gitleaks checks every commit, not just the latest
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Secrets committed to Git (Gitleaks)
+        run: |
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/repo" \
+            ghcr.io/gitleaks/gitleaks:v8.24.0 git /repo --redact --verbose --exit-code 1
+      - name: Misconfigurations in Terraform, Dockerfile and workflows (Checkov)
+        run: |
+          pip install --quiet checkov==3.3.30
+          checkov -d . --framework terraform,dockerfile,github_actions --compact --quiet
+      - name: Known vulnerabilities in Python dependencies (pip-audit)
+        run: |
+          pip install --quiet pip-audit
+          pip-audit -r requirements.txt --progress-spinner off
+
+  # ---------------------------------------------------------------------------
   # Pull requests: show what Terraform would change, as a PR comment.
   # Uses the read-only plan role. -refresh=false and -lock=false keep it
   # read-only: it compares the code with the saved state without touching AWS
@@ -139,7 +167,7 @@ jobs:
   build-push:
     name: Build, scan and push image
     if: github.event_name == 'push' && github.ref == 'refs/heads/main' && vars.AWS_DEPLOY_ROLE_ARN != ''
-    needs: [tests, e2e, terraform]
+    needs: [tests, e2e, terraform, security]
     runs-on: ubuntu-latest
     permissions:
       contents: read

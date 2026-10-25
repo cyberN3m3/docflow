@@ -14,6 +14,11 @@ locals {
 resource "aws_s3_bucket" "state" {
   bucket = local.state_bucket
 
+  #checkov:skip=CKV_AWS_18:Access to the state is recorded by CloudTrail; separate S3 access logs aren't needed.
+  #checkov:skip=CKV_AWS_144:Versioning protects the state; cross-region replication doubles the cost.
+  #checkov:skip=CKV_AWS_145:SSE-S3 encryption; a KMS key costs $1/month.
+  #checkov:skip=CKV2_AWS_62:No process reacts to state changes.
+
   # Terraform refuses to delete this bucket, even with `terraform destroy`.
   lifecycle {
     prevent_destroy = true

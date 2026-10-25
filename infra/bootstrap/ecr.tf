@@ -1,6 +1,8 @@
 # Container registry for DocFlow images. Lives in the bootstrap layer so
 # images survive the daily destroy of the main environment.
 resource "aws_ecr_repository" "app" {
+  #checkov:skip=CKV_AWS_136:Images are encrypted with AES-256 (AWS-managed); they contain no secrets, so a KMS key adds cost but little protection.
+
   name = "docflow"
 
   # A pushed tag (e.g. a Git commit hash) can never be overwritten.

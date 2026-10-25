@@ -106,3 +106,20 @@ def test_path_traversal_filename_is_sanitised(logged_in):
     job = latest_job()
     assert ".." not in job.input_keys[0]
     assert job.input_names == ["passwd.txt"]
+
+
+def test_every_convertible_type_has_a_readable_label():
+    from app.gotenberg import CONVERTIBLE_EXTENSIONS
+    from app.main import SOURCE_TYPES
+
+    assert CONVERTIBLE_EXTENSIONS <= SOURCE_TYPES.keys()
+
+
+def test_dashboard_names_the_screen_and_uses_plain_status_words(client):
+    client.post("/register", data={"email": "words@example.com", "password": "password123"})
+    client.post("/convert", files={"file": ("notes.txt", b"hello", "text/plain")})
+    r = client.get("/dashboard")
+    assert "<h1>Files</h1>" in r.text
+    assert "Text to PDF" in r.text
+    assert ">Ready<" in r.text
+    assert 'data-job="' in r.text

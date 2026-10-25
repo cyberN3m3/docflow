@@ -147,6 +147,8 @@ resource "aws_iam_role" "github_plan" {
 # Just enough to read the Terraform state and the data sources the plan
 # looks up. No access to the files bucket, the database or any secret.
 data "aws_iam_policy_document" "github_plan" {
+  #checkov:skip=CKV_AWS_356:The "*" statement holds only read-only lookups (availability zones, prefix lists, CloudFront managed policies) that AWS does not allow to be limited to a resource.
+
   statement {
     sid       = "ReadTerraformState"
     actions   = ["s3:GetObject", "s3:ListBucket"]

@@ -43,6 +43,8 @@ resource "random_password" "app_secret_key" {
 }
 
 resource "aws_secretsmanager_secret" "app_secret_key" {
+  #checkov:skip=CKV_AWS_149:Encrypted with the AWS-managed Secrets Manager key; a customer-managed key costs $1/month.
+  #checkov:skip=CKV2_AWS_57:Rotating SECRET_KEY logs everyone out; it is regenerated on every rebuild instead. The database password is rotated by RDS.
   name        = "${local.name}/app-secret-key"
   description = "DocFlow SECRET_KEY used to sign session cookies"
 

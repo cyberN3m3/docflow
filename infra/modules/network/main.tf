@@ -2,6 +2,7 @@
 # app containers, private subnets for the database, and no NAT Gateway.
 
 data "aws_availability_zones" "available" {
+  #checkov:skip=CKV_AWS_394:Only the first two zones are used (count = az_count), so a new zone appearing changes nothing.
   state = "available"
 }
 
@@ -104,6 +105,7 @@ resource "aws_vpc_endpoint" "s3" {
 # --- Security groups: one "bouncer" per layer --------------------------------
 
 resource "aws_security_group" "alb" {
+  #checkov:skip=CKV2_AWS_5:False positive: attached in the edge, compute and database modules, which Checkov can't follow across modules.
   name        = "${var.name}-alb"
   description = "Load balancer: accepts traffic from CloudFront only"
   vpc_id      = aws_vpc.this.id
@@ -112,6 +114,7 @@ resource "aws_security_group" "alb" {
 }
 
 resource "aws_security_group" "app" {
+  #checkov:skip=CKV2_AWS_5:False positive: attached in the edge, compute and database modules, which Checkov can't follow across modules.
   name        = "${var.name}-app"
   description = "Web app: accepts traffic from the load balancer only"
   vpc_id      = aws_vpc.this.id
@@ -120,6 +123,7 @@ resource "aws_security_group" "app" {
 }
 
 resource "aws_security_group" "worker" {
+  #checkov:skip=CKV2_AWS_5:False positive: attached in the edge, compute and database modules, which Checkov can't follow across modules.
   name        = "${var.name}-worker"
   description = "Worker: no inbound traffic at all"
   vpc_id      = aws_vpc.this.id
@@ -128,6 +132,7 @@ resource "aws_security_group" "worker" {
 }
 
 resource "aws_security_group" "db" {
+  #checkov:skip=CKV2_AWS_5:False positive: attached in the edge, compute and database modules, which Checkov can't follow across modules.
   name        = "${var.name}-db"
   description = "Database: accepts Postgres from the app and worker only"
   vpc_id      = aws_vpc.this.id
@@ -137,6 +142,7 @@ resource "aws_security_group" "db" {
 
 # Load balancer: in from CloudFront on port 80, out to the app on port 8000.
 resource "aws_vpc_security_group_ingress_rule" "alb_from_cloudfront" {
+  #checkov:skip=CKV_AWS_260:False positive: the source is CloudFront's managed prefix list, not 0.0.0.0/0.
   security_group_id = aws_security_group.alb.id
   description       = "HTTP from CloudFront"
   ip_protocol       = "tcp"
@@ -197,4 +203,80 @@ resource "aws_vpc_security_group_ingress_rule" "db_from_worker" {
   from_port                    = 5432
   to_port                      = 5432
   referenced_security_group_id = aws_security_group.worker.id
+}
+
+# --- Default security group: lock it ------------------------------------------
+# Every VPC comes with a "default" security group that lets its members talk
+# to each other freely. Nothing uses it, so Terraform takes it over and removes
+# all its rules, so nothing can be accidentally launched into it with open access.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
+
+  tags = { Name = "${var.name}-default-locked" }
+}
+
+# --- VPC flow logs ---------------------------------------------------------------
+# A record of every network connection in the VPC (who, where, which port,
+# accepted or rejected). Used to investigate incidents, and GuardDuty can use
+# the same data. Kept for 7 days.
+
+resource "aws_cloudwatch_log_group" "flow_logs" {
+  name              = "/vpc/${var.name}/flow-logs"
+  retention_in_days = var.flow_log_retention_days
+
+  #checkov:skip=CKV_AWS_158:Encrypted with CloudWatch's AWS-managed key; a customer-managed KMS key costs $1/month.
+  #checkov:skip=CKV_AWS_338:7 days keeps the cost near zero in a demo; production compliance would need 1 year.
+}
+
+data "aws_iam_policy_document" "flow_logs_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["vpc-flow-logs.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "flow_logs" {
+  name               = "${var.name}-flow-logs"
+  assume_role_policy = data.aws_iam_policy_document.flow_logs_assume.json
+}
+
+data "aws_iam_policy_document" "flow_logs_write" {
+  statement {
+    sid = "WriteToTheFlowLogGroupOnly"
+    actions = [
+      "logs:CreateLogStream",
+      "logs:PutLogEvents",
+      "logs:DescribeLogStreams",
+    ]
+    resources = ["${aws_cloudwatch_log_group.flow_logs.arn}:*"]
+  }
+
+  statement {
+    # The flow log service checks that the group exists. This action can't
+    # be limited to one log group.
+    sid       = "FindLogGroups"
+    actions   = ["logs:DescribeLogGroups"]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "flow_logs" {
+  name   = "write-flow-logs"
+  role   = aws_iam_role.flow_logs.id
+  policy = data.aws_iam_policy_document.flow_logs_write.json
+}
+
+resource "aws_flow_log" "this" {
+  vpc_id                   = aws_vpc.this.id
+  traffic_type             = "ALL"
+  log_destination_type     = "cloud-watch-logs"
+  log_destination          = aws_cloudwatch_log_group.flow_logs.arn
+  iam_role_arn             = aws_iam_role.flow_logs.arn
+  max_aggregation_interval = 600 # 10 minutes: cheaper than 1-minute records
+
+  tags = { Name = "${var.name}-flow-logs" }
 }

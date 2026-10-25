@@ -21,3 +21,15 @@ variable "health_check_path" {
   type    = string
   default = "/healthz"
 }
+
+variable "login_rate_limit" {
+  description = "Most requests one IP address may send to /login in 5 minutes."
+  type        = number
+  default     = 100
+}
+
+variable "ip_rate_limit" {
+  description = "Most requests one IP address may send in 5 minutes."
+  type        = number
+  default     = 2000
+}

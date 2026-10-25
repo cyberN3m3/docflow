@@ -6,6 +6,11 @@ data "aws_caller_identity" "current" {}
 resource "aws_s3_bucket" "files" {
   bucket = "${var.name}-files-${data.aws_caller_identity.current.account_id}"
 
+  #checkov:skip=CKV_AWS_18:Access is recorded by the app (who downloads which job) and CloudTrail; S3 access logs would add a second bucket.
+  #checkov:skip=CKV_AWS_144:Cross-region replication doubles storage cost; versioning protects against deletion (see docs/disaster-recovery.md).
+  #checkov:skip=CKV_AWS_145:SSE-S3 encryption; a KMS key costs $1/month plus per-request fees.
+  #checkov:skip=CKV2_AWS_62:Jobs are queued through SQS by the app, not by S3 events.
+
   # Lets `terraform destroy` empty and delete the bucket. Fine for a demo
   # environment that is rebuilt daily; production would set this to false.
   force_destroy = true

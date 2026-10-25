@@ -168,8 +168,13 @@ resource "aws_accessanalyzer_analyzer" "account" {
 
 # --- Block public S3 access for the whole account ------------------------------
 # A second lock on top of each bucket's own setting: even a mistake in a
-# future bucket can't make it public.
+# future bucket can't make it public. OFF by default because this account
+# also hosts other projects with public buckets (e.g. a static website),
+# which this setting would take offline. DocFlow's own buckets block public
+# access individually either way.
 resource "aws_s3_account_public_access_block" "this" {
+  count = var.block_public_s3_account_wide ? 1 : 0
+
   block_public_acls       = true
   block_public_policy     = true
   ignore_public_acls      = true

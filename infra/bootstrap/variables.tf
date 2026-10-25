@@ -32,3 +32,9 @@ variable "environment_name" {
   type        = string
   default     = "docflow-demo"
 }
+
+variable "block_public_s3_account_wide" {
+  description = "Block public access for every S3 bucket in the account. Turn on once no other project needs a public bucket."
+  type        = bool
+  default     = false
+}

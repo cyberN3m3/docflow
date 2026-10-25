@@ -14,6 +14,7 @@ from starlette.middleware.sessions import SessionMiddleware
 from .auth import MIN_PASSWORD_LEN, hash_password, password_problem, verify_password
 from .config import settings
 from .db import db_is_healthy, get_db, init_db
+from .filenames import content_disposition, safe_filename
 from .gotenberg import CONVERTIBLE_EXTENSIONS
 from .models import Job, User
 from .storage import get_storage
@@ -101,12 +102,6 @@ def job_status_label(job: Job) -> str:
 
 
 templates.env.globals.update(job_kind=job_kind, job_status_label=job_status_label)
-
-
-def safe_filename(name: str) -> str:
-    name = Path(name or "file").name
-    name = re.sub(r"[^A-Za-z0-9._ -]", "_", name).strip() or "file"
-    return name[:150]
 
 
 def extension(name: str) -> str:
@@ -246,7 +241,7 @@ async def convert(request: Request, file: UploadFile = File(...), db: Session = 
     job = Job(user_id=user.id, kind="convert", input_names=[name], output_name=f"{name.rsplit('.', 1)[0]}.pdf")
     db.add(job)
     db.flush()  # assigns job.id
-    key = f"inputs/{user.id}/{job.id}/0_{name}"
+    key = f"inputs/{user.id}/{job.id}/0.{extension(name)}"  # the name lives in the database, not the path
     get_storage().save(key, data)
     job.input_keys = [key]
     db.commit()
@@ -289,7 +284,7 @@ async def merge(request: Request, files: list[UploadFile] = File(...), db: Sessi
     storage = get_storage()
     keys = []
     for i, (name, data) in enumerate(zip(names, blobs)):
-        key = f"inputs/{user.id}/{job.id}/{i}_{name}"
+        key = f"inputs/{user.id}/{job.id}/{i}.pdf"
         storage.save(key, data)
         keys.append(key)
     job.input_keys = keys
@@ -324,7 +319,7 @@ def download(job_id: str, user: User = Depends(require_user), db: Session = Depe
     return Response(
         storage.read(job.output_key),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": content_disposition(filename)},
     )
 
 

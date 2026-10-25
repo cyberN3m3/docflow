@@ -1,70 +1,128 @@
 {% extends "base.html" %}
+{% block title %}Files · {{ app_name }}{% endblock %}
 {% block content %}
-<div class="grid">
-  <section class="card">
-    <h2>Convert to PDF</h2>
-    <p class="muted">Word, Excel, PowerPoint, text or images. Max {{ max_upload_mb }} MB.</p>
-    <form method="post" action="/convert" enctype="multipart/form-data" class="stack">
-      <input type="file" name="file" required>
-      <button class="primary">Convert</button>
-    </form>
-    <p class="hint">Supported: {{ convertible }}</p>
+<div class="page{% if not jobs %} is-empty{% endif %}" data-max-mb="{{ max_upload_mb }}">
+  <div class="title-row">
+    <div>
+      <h1>Files</h1>
+      <p class="lede">
+        {% if jobs %}
+          {{ counts.ready }} ready to download · {{ counts.progress }} in progress · {{ counts.failed }} failed
+        {% else %}
+          Convert a document to PDF, or merge PDFs into one.
+        {% endif %}
+      </p>
+    </div>
+    <div class="title-actions js-only">
+      <button type="button" class="btn btn-outline" data-pick="merge">Merge PDFs</button>
+      <button type="button" class="btn btn-primary" data-pick="convert">Convert to PDF</button>
+    </div>
+  </div>
+
+  {% for f in flashes %}
+    <div class="notice notice-{{ f.kind }}" role="{{ 'alert' if f.kind == 'error' else 'status' }}">{{ f.message }}</div>
+  {% endfor %}
+  <div class="notice notice-error" id="drop-error" role="alert" hidden></div>
+
+  <section class="make" aria-label="Make a PDF">
+    <button type="button" class="drop js-only" id="dropzone" aria-describedby="types">
+      <svg class="drop-icon" viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V4M8 8l4-4 4 4"/><path d="M4 15v4.5h16V15"/></svg>
+      <span class="drop-text">
+        <span class="drop-title" id="drop-title"><span class="for-pointer">Drop files anywhere on this page, or choose them</span><span class="for-touch">Choose files to convert or merge</span></span>
+        <span class="drop-hint" id="types">One document converts to PDF: Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, JPG or PNG, up to {{ max_upload_mb }} MB. Two to twenty PDFs merge into one.</span>
+      </span>
+    </button>
+    <input type="file" id="any-files" class="visually-hidden" multiple accept="{{ accept }},.pdf" tabindex="-1" aria-hidden="true">
+
+    <div class="fallback">
+      <form id="convert-form" method="post" action="/convert" enctype="multipart/form-data">
+        <label for="convert-file">Convert a document to PDF</label>
+        <span class="field-hint">Word, Excel, PowerPoint, OpenDocument, RTF, text, CSV, JPG or PNG, up to {{ max_upload_mb }} MB.</span>
+        <input id="convert-file" type="file" name="file" accept="{{ accept }}" required>
+        <button class="btn btn-primary">Convert to PDF</button>
+      </form>
+      <form id="merge-form" method="post" action="/merge" enctype="multipart/form-data">
+        <label for="merge-files">Merge PDFs</label>
+        <span class="field-hint">Choose 2 to 20 PDFs. They're joined in the order you choose them.</span>
+        <input id="merge-files" type="file" name="files" accept="application/pdf,.pdf" multiple required>
+        <button class="btn btn-outline">Merge PDFs</button>
+      </form>
+    </div>
+
+    <section class="merge" id="merge-panel" aria-labelledby="merge-heading" hidden>
+      <h2 id="merge-heading" tabindex="-1">Merge <span data-merge-count>0</span> PDFs</h2>
+      <p class="muted">They're joined in this order. Move a file to change it.</p>
+      <ol class="merge-list" id="merge-list"></ol>
+      <div class="merge-actions">
+        <button type="button" class="btn btn-outline" data-merge-add>Add PDFs</button>
+        <span class="spacer"></span>
+        <button type="button" class="btn btn-ghost" data-merge-cancel>Cancel</button>
+        <button type="button" class="btn btn-primary" data-merge-submit>Merge PDFs</button>
+      </div>
+    </section>
   </section>
 
-  <section class="card">
-    <h2>Merge PDFs</h2>
-    <p class="muted">Pick 2–20 PDFs. They're merged in the order selected.</p>
-    <form method="post" action="/merge" enctype="multipart/form-data" class="stack">
-      <input type="file" name="files" accept="application/pdf,.pdf" multiple required>
-      <button class="primary">Merge</button>
-    </form>
+  <section class="files-section" aria-labelledby="files-heading">
+    <h2 id="files-heading" class="visually-hidden">Your files</h2>
+    {% if jobs %}
+      <div class="tabs js-only" role="tablist" aria-label="Show files">
+        <button type="button" role="tab" class="tab" aria-selected="true" data-filter="all">All <span class="count">{{ jobs | length }}</span></button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="ready">Ready <span class="count">{{ counts.ready }}</span></button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="progress">In progress <span class="count">{{ counts.progress }}</span></button>
+        <button type="button" role="tab" class="tab" aria-selected="false" data-filter="failed">Failed <span class="count">{{ counts.failed }}</span></button>
+      </div>
+
+      <div class="toolbar">
+        <label class="search js-only">
+          <span class="visually-hidden">Search files</span>
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input type="search" id="search" placeholder="Search by file name" autocomplete="off">
+        </label>
+        <span class="muted num" id="shown" aria-live="polite">{{ jobs | length }} files{% if jobs | length >= 50 %} (your latest 50){% endif %}</span>
+      </div>
+
+      <div class="table-wrap">
+        <table class="files">
+          <thead>
+            <tr>
+              <th scope="col">File</th>
+              <th scope="col" class="col-kind">Type</th>
+              <th scope="col" class="col-status">Status</th>
+              <th scope="col" class="col-when num">Created</th>
+              <th scope="col" class="col-actions"><span class="visually-hidden">Actions</span></th>
+            </tr>
+          </thead>
+          <tbody>
+          {% for job in jobs %}
+            {% set group = 'ready' if job.status == 'done' else ('failed' if job.status == 'failed' else 'progress') %}
+            <tr data-job="{{ job.id }}" data-status="{{ job.status }}" data-group="{{ group }}" data-search="{{ (job.output_name ~ ' ' ~ (job.input_names | join(' '))) | lower }}">
+              <td class="file">
+                <span class="file-name">{{ job.output_name }}</span>
+                <span class="file-src">from {{ job.input_names | join(", ") | truncate(90) }}</span>
+                {% if job.error %}<span class="file-error">Couldn't make this PDF: {{ job.error }}</span>{% endif %}
+              </td>
+              <td class="kind">{{ job_kind(job) }}</td>
+              <td class="status"><span class="pill pill-{{ group }}{% if job.status == 'queued' %} pill-waiting{% endif %}">{{ job_status_label(job) }}</span></td>
+              <td class="when num"><time datetime="{{ job.created_at.strftime('%Y-%m-%dT%H:%M:%SZ') }}">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }} UTC</time></td>
+              <td class="row-actions">
+                {% if job.status == "done" %}<a class="btn btn-outline btn-sm" href="/jobs/{{ job.id }}/download">Download</a>{% endif %}
+                <form method="post" action="/jobs/{{ job.id }}/delete">
+                  <button class="btn-icon" data-confirm aria-label="Delete {{ job.output_name }}" title="Delete">
+                    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></svg>
+                    <span class="confirm-text">Delete</span>
+                  </button>
+                </form>
+              </td>
+            </tr>
+          {% endfor %}
+            <tr class="no-match" hidden><td colspan="5"><div class="empty-box">No files match this view.</div></td></tr>
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="empty-box">No files yet. Your PDFs will appear here, ready to download.</div>
+    {% endif %}
   </section>
 </div>
-
-<section class="card">
-  <h2>Your files</h2>
-  {% if jobs %}
-  <table class="jobs">
-    <thead><tr><th>File</th><th>Type</th><th>Status</th><th>Created</th><th></th></tr></thead>
-    <tbody>
-    {% for job in jobs %}
-      <tr data-job="{{ job.id }}" data-status="{{ job.status }}">
-        <td>
-          {{ job.output_name }}
-          <div class="hint">{{ job.input_names | join(", ") | truncate(80) }}</div>
-          {% if job.error %}<div class="error-text">{{ job.error }}</div>{% endif %}
-        </td>
-        <td>{{ job.kind }}</td>
-        <td><span class="badge {{ job.status }}">{{ job.status }}</span></td>
-        <td class="hint">{{ job.created_at.strftime("%Y-%m-%d %H:%M") }}</td>
-        <td class="actions">
-          {% if job.status == "done" %}<a class="button" href="/jobs/{{ job.id }}/download">Download</a>{% endif %}
-          <form method="post" action="/jobs/{{ job.id }}/delete"><button class="link danger">Delete</button></form>
-        </td>
-      </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-  {% else %}
-    <p class="muted">Nothing yet. Convert or merge something above.</p>
-  {% endif %}
-</section>
-
-<script>
-  // Poll unfinished jobs and refresh the page when any of them changes state.
-  const pending = [...document.querySelectorAll('tr[data-job]')]
-    .filter(r => ['queued', 'processing'].includes(r.dataset.status));
-  if (pending.length) {
-    const timer = setInterval(async () => {
-      for (const row of pending) {
-        try {
-          const res = await fetch(`/jobs/${row.dataset.job}/status`);
-          if (!res.ok) continue;
-          const { status } = await res.json();
-          if (status !== row.dataset.status) { clearInterval(timer); location.reload(); return; }
-        } catch (e) { /* network blip; try again next tick */ }
-      }
-    }, 2000);
-  }
-</script>
 {% endblock %}
+{% block scripts %}<script src="/static/app.js" defer></script>{% endblock %}

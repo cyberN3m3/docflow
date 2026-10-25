@@ -1,13 +1,25 @@
 {% extends "base.html" %}
 {% block title %}Sign up · {{ app_name }}{% endblock %}
+{% block sheet_class %}sheet-auth{% endblock %}
 {% block content %}
-<section class="card narrow">
-  <h1>Create your account</h1>
-  <form method="post" action="/register" class="stack">
-    <label>Email <input type="email" name="email" required autocomplete="email"></label>
-    <label>Password <input type="password" name="password" required minlength="8" autocomplete="new-password"></label>
-    <button class="primary">Sign up</button>
+<div class="auth">
+  <h1>Create your {{ app_name }} account</h1>
+  <p class="lede">Your files are private to your account.</p>
+  {% for f in flashes %}
+    <div class="notice notice-{{ f.kind }}" role="{{ 'alert' if f.kind == 'error' else 'status' }}">{{ f.message }}</div>
+  {% endfor %}
+  <form method="post" action="/register" class="form">
+    <div class="field">
+      <label for="email">Email</label>
+      <input id="email" type="email" name="email" required autocomplete="email">
+    </div>
+    <div class="field">
+      <label for="password">Password</label>
+      <input id="password" type="password" name="password" required minlength="{{ min_password_len }}" autocomplete="new-password" aria-describedby="password-rule">
+      <span class="field-hint" id="password-rule">At least {{ min_password_len }} characters.</span>
+    </div>
+    <button class="btn btn-primary btn-block">Sign up</button>
   </form>
   <p class="muted">Already have an account? <a href="/login">Log in</a></p>
-</section>
+</div>
 {% endblock %}

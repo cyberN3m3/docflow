@@ -228,6 +228,8 @@ resource "aws_cloudwatch_log_group" "flow_logs" {
   #checkov:skip=CKV_AWS_338:7 days keeps the cost near zero in a demo; production compliance would need 1 year.
 }
 
+data "aws_caller_identity" "current" {}
+
 data "aws_iam_policy_document" "flow_logs_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -235,6 +237,19 @@ data "aws_iam_policy_document" "flow_logs_assume" {
     principals {
       type        = "Service"
       identifiers = ["vpc-flow-logs.amazonaws.com"]
+    }
+
+    # Confused-deputy protection: only flow logs in this account.
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:vpc-flow-log/*"]
     }
   }
 }

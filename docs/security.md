@@ -22,7 +22,7 @@ Data flow: **browser → CloudFront + WAF → ALB → web task → SQS → worke
 | **R**epudiation | "I never changed that security group" | CloudTrail in every region, kept for a year; WAF logs of blocked requests; VPC flow logs |
 | **I**nformation disclosure | Reading another user's file; intercepting traffic; a public bucket | Ownership check on every job; downloads are 5-minute presigned links; HTTPS for viewers; TLS required by S3 (bucket policy) and RDS (`rds.force_ssl=1`); S3 public access blocked per bucket **and** account-wide; database has no internet route |
 | **D**enial of service | Request floods; huge uploads; poison jobs | CloudFront + AWS Shield Standard; WAF 2,000 requests per IP per 5 minutes; 20 MB upload limit; autoscaling (web 1–3, worker 1–4); dead-letter queue after 3 failures |
-| **E**levation of privilege | Exploiting the app to reach AWS; a stolen CI credential | Non-root containers; one IAM role per service, scoped to its own bucket and queue; no AWS keys anywhere (OIDC + task roles); deploy role usable only from `main`, plan role only from PRs and read-only; WAF managed rules (OWASP-style, Log4j, IP reputation) |
+| **E**levation of privilege | Exploiting the app to reach AWS; a stolen CI credential | Non-root containers; one IAM role per service, scoped to its own bucket and queue; service trust policies limited to this account (confused-deputy protection); no AWS keys anywhere (OIDC + task roles); deploy role usable only from `main`, plan role only from PRs and read-only; WAF managed rules (OWASP-style, Log4j, IP reputation) |
 
 ## 3. Controls by layer
 

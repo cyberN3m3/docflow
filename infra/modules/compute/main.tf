@@ -220,6 +220,9 @@ resource "aws_ecs_service" "worker" {
   desired_count   = 1
 
   # FARGATE_SPOT by default (set worker_use_spot = false for on-demand).
+  # Switching capacity provider on a running service needs a new deployment.
+  force_new_deployment = true
+
   capacity_provider_strategy {
     capacity_provider = var.worker_use_spot ? "FARGATE_SPOT" : "FARGATE"
     weight            = 1

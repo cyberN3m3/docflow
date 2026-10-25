@@ -4,6 +4,10 @@
 #   Task roles:     used by the app code (boto3) at run time. Each service
 #                   gets only what it needs. No access keys anywhere.
 
+data "aws_caller_identity" "current" {}
+
+# Confused-deputy protection: ECS may assume these roles only for tasks in
+# THIS account and region, so no other AWS customer can trick ECS into it.
 data "aws_iam_policy_document" "ecs_tasks_assume" {
   statement {
     actions = ["sts:AssumeRole"]
@@ -11,6 +15,18 @@ data "aws_iam_policy_document" "ecs_tasks_assume" {
     principals {
       type        = "Service"
       identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+
+    condition {
+      test     = "ArnLike"
+      variable = "aws:SourceArn"
+      values   = ["arn:aws:ecs:${var.region}:${data.aws_caller_identity.current.account_id}:*"]
     }
   }
 }

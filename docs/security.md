@@ -20,7 +20,7 @@ Data flow: **browser → CloudFront + WAF → ALB → web task → SQS → worke
 | **S**poofing | Password guessing on `/login`; forged session cookie | WAF limits `/login` to 100 requests per IP per 5 minutes; bcrypt hashes; session cookie signed with a 64-character `SECRET_KEY` from Secrets Manager, `Secure`, `HttpOnly`, `SameSite=Lax` |
 | **T**ampering | Changing the app or infrastructure outside review | Read-only container root filesystems; IMMUTABLE image tags; every change goes through a PR with tests, security scans and a Terraform plan; CloudTrail with log file validation |
 | **R**epudiation | "I never changed that security group" | CloudTrail in every region, kept for a year; WAF logs of blocked requests; VPC flow logs |
-| **I**nformation disclosure | Reading another user's file; intercepting traffic; a public bucket | Ownership check on every job; downloads are 5-minute presigned links; HTTPS for viewers; TLS required by S3 (bucket policy) and RDS (`rds.force_ssl=1`); S3 public access blocked per bucket **and** account-wide; database has no internet route |
+| **I**nformation disclosure | Reading another user's file; intercepting traffic; a public bucket | Ownership check on every job; downloads are 5-minute presigned links; HTTPS for viewers; TLS required by S3 (bucket policy) and RDS (`rds.force_ssl=1`); S3 public access blocked on every DocFlow bucket; database has no internet route |
 | **D**enial of service | Request floods; huge uploads; poison jobs | CloudFront + AWS Shield Standard; WAF 2,000 requests per IP per 5 minutes; 20 MB upload limit; autoscaling (web 1–3, worker 1–4); dead-letter queue after 3 failures |
 | **E**levation of privilege | Exploiting the app to reach AWS; a stolen CI credential | Non-root containers; one IAM role per service, scoped to its own bucket and queue; service trust policies limited to this account (confused-deputy protection); no AWS keys anywhere (OIDC + task roles); deploy role usable only from `main`, plan role only from PRs and read-only; WAF managed rules (OWASP-style, Log4j, IP reputation) |
 
@@ -33,7 +33,7 @@ Data flow: **browser → CloudFront + WAF → ALB → web task → SQS → worke
 | Compute | Fargate (no servers to patch); non-root user; **read-only root filesystem** (web and worker) with a scratch `/tmp`; secrets injected at start-up, never in the task definition; image scanned on push |
 | Data | S3: encryption, versioning, TLS-only, public access blocked, lifecycle; RDS: encryption, private, managed rotating password, **TLS enforced**, **slow-query, schema-change and connection logs** |
 | Identity | IAM Identity Center (SSO) with MFA; no IAM users or access keys; GitHub OIDC roles tied to the repo's immutable IDs |
-| Account | **CloudTrail** (all regions, log validation), **IAM Access Analyzer**, **account-wide S3 public access block**, **EBS encryption by default**, **password policy**, AWS Budgets alerts |
+| Account | **CloudTrail** (all regions, log validation), **IAM Access Analyzer**, account-wide S3 public access block (switchable, off here; see section 5), **EBS encryption by default**, **password policy**, AWS Budgets alerts |
 | Pipeline | Unit + end-to-end tests; **Gitleaks** (secrets in Git history); **Checkov** (Terraform, Dockerfile, workflows); **pip-audit** (Python CVEs); ECR scan gate blocks CRITICAL vulnerabilities; smoke test checks the WAF blocks a Log4Shell-style request; Dependabot |
 
 Bold items were added in Phase 8.
@@ -89,6 +89,8 @@ Each one is recorded next to the resource as `#checkov:skip=<check>:<reason>`, s
 | No anonymous-IP blocking in WAF | It would block VPN users and cloud-hosted clients, including the CI smoke test | Count mode first, then decide using real traffic |
 | Gotenberg container is writable | LibreOffice must write its profile and temp files | Same; it has no AWS permissions and no inbound network access |
 | `SECRET_KEY` not rotated automatically | Rotating it logs every user out; it is regenerated on each rebuild | Scheduled rotation supporting two active keys |
+| Account-wide S3 public access block is off | The AWS account also hosts other projects with public buckets (a static website) and a public Lambda. DocFlow's buckets block public access individually | One AWS account per workload (AWS Organizations), with the account-wide block on everywhere |
+| Prowler `ecr_repository_image_no_secrets` | False positive: the match is the text "username/password" inside `/usr/bin/lslogins`, a standard Debian binary | Mute the finding with a documented reason |
 | Third-party GitHub Actions pinned to major versions | Easier for a demo; Dependabot keeps them updated | Pin to commit SHAs |
 
 ## 6. Image vulnerability policy

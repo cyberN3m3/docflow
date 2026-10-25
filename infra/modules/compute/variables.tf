@@ -94,3 +94,9 @@ variable "log_retention_days" {
   type    = number
   default = 7
 }
+
+variable "worker_use_spot" {
+  description = "Run the worker on Fargate Spot (about 70% cheaper; interrupted jobs are retried)."
+  type        = bool
+  default     = true
+}

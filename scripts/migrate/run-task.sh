@@ -6,6 +6,10 @@
 # (which can't be reached from your codespace, by design).
 #
 # Usage:  ./scripts/migrate/run-task.sh python -m app.migrate counts
+#
+# Extra environment variables for the task (e.g. to point it at a restored
+# database during a disaster recovery drill):
+#   RUN_TASK_ENV="DB_HOST=docflow-demo-db-drill.xxxx.rds.amazonaws.com" ./scripts/migrate/run-task.sh ...
 set -euo pipefail
 export AWS_PAGER=""
 
@@ -16,7 +20,13 @@ CLUSTER=$($TF output -raw ecs_cluster)
 FAMILY=$($TF output -raw web_task_family)
 SUBNETS=$($TF output -raw public_subnet_ids_csv)
 SG=$($TF output -raw app_security_group_id)
-OVERRIDES=$(python3 -c 'import json, sys; print(json.dumps({"containerOverrides": [{"name": "web", "command": sys.argv[1:]}]}))' "$@")
+OVERRIDES=$(RUN_TASK_ENV="${RUN_TASK_ENV:-}" python3 -c '
+import json, os, sys
+env = [dict(zip(("name", "value"), pair.split("=", 1))) for pair in os.environ["RUN_TASK_ENV"].split()]
+override = {"name": "web", "command": sys.argv[1:]}
+if env:
+    override["environment"] = env
+print(json.dumps({"containerOverrides": [override]}))' "$@")
 
 echo "Starting one-off task: $*" >&2
 TASK_ARN=$(aws ecs run-task \

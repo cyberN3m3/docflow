@@ -24,3 +24,9 @@ variable "allocated_storage" {
   type        = number
   default     = 20
 }
+
+variable "backup_retention_days" {
+  description = "Days of automated backups (point-in-time recovery window)."
+  type        = number
+  default     = 7
+}

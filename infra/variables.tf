@@ -20,3 +20,9 @@ variable "image_tag" {
   description = "Which DocFlow image to run: the Git commit hash pushed by scripts/push-image.sh."
   type        = string
 }
+
+variable "alert_email" {
+  description = "Email address for alarms (AWS sends a confirmation link first). Empty = no email."
+  type        = string
+  default     = ""
+}

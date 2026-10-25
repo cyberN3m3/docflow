@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 from .config import settings
+from .filenames import content_disposition
 
 
 class LocalStorage:
@@ -88,7 +89,7 @@ class S3Storage:
             Params={
                 "Bucket": self.bucket,
                 "Key": key,
-                "ResponseContentDisposition": f'attachment; filename="{filename}"',
+                "ResponseContentDisposition": content_disposition(filename),
                 "ResponseContentType": "application/pdf",
             },
             ExpiresIn=self.url_expiry,

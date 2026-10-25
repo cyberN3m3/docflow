@@ -45,11 +45,20 @@ EXIT_CODE=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" \
   --query 'tasks[0].containers[?name==`web`].exitCode | [0]' --output text)
 
 echo "--- task output ---" >&2
-aws logs get-log-events \
-  --log-group-name "/ecs/$CLUSTER/web" \
-  --log-stream-name "web/web/$TASK_ID" \
-  --start-from-head --output json \
-  | python3 -c 'import json, sys; [print(e["message"]) for e in json.load(sys.stdin)["events"]]'
+# CloudWatch Logs can take a few seconds to receive the last lines after the
+# task stops, so wait until the output appears (up to 60 s).
+OUTPUT=""
+for _ in $(seq 1 12); do
+  OUTPUT=$(aws logs get-log-events \
+    --log-group-name "/ecs/$CLUSTER/web" \
+    --log-stream-name "web/web/$TASK_ID" \
+    --start-from-head --output json 2>/dev/null \
+    | python3 -c 'import json, sys; [print(e["message"]) for e in json.load(sys.stdin)["events"]]' 2>/dev/null || true)
+  if [ "$EXIT_CODE" != "0" ] || printf '%s' "$OUTPUT" | grep -qE '^(COUNTS|IMPORTED) '; then break; fi
+  if [ -n "$OUTPUT" ] && ! printf '%s' "$*" | grep -q 'app.migrate'; then break; fi
+  sleep 5
+done
+printf '%s\n' "$OUTPUT"
 
 if [ "$EXIT_CODE" != "0" ]; then
   REASON=$(aws ecs describe-tasks --cluster "$CLUSTER" --tasks "$TASK_ARN" --query 'tasks[0].stoppedReason' --output text)

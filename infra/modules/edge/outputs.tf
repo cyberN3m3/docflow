@@ -24,3 +24,8 @@ output "target_group_arn_suffix" {
   description = "Used by CloudWatch metrics in Phase 10."
   value       = aws_lb_target_group.web.arn_suffix
 }
+
+output "web_acl_name" {
+  description = "Used by CloudWatch metrics in Phase 10."
+  value       = aws_wafv2_web_acl.this.name
+}

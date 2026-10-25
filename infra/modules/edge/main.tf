@@ -29,10 +29,17 @@ resource "aws_lb" "this" {
 
   # Demo setting so the daily destroy works. Production would set true.
   enable_deletion_protection = false
+
+  # Accepted risks (see docs/security.md):
+  #checkov:skip=CKV_AWS_150:Deletion protection is off so the environment can be destroyed after every session. Production: on.
+  #checkov:skip=CKV_AWS_91:Access logs skipped to save cost; WAF logs blocked requests and CloudWatch has ALB metrics. Production: on.
+  #checkov:skip=CKV2_AWS_28:The ALB only accepts CloudFront traffic (prefix list + secret header), and WAF is attached to CloudFront.
+  #checkov:skip=CKV2_AWS_20:Viewers are redirected to HTTPS by CloudFront; the ALB never receives viewer traffic directly.
 }
 
 # Where the load balancer sends traffic: the web tasks' IP addresses on port 8000.
 resource "aws_lb_target_group" "web" {
+  #checkov:skip=CKV_AWS_378:ALB-to-task traffic stays inside the VPC, between security groups that only allow each other.
   name        = "${var.name}-web"
   port        = 8000
   protocol    = "HTTP"
@@ -54,6 +61,8 @@ resource "aws_lb_target_group" "web" {
 
 # Listener: by default, refuse everything...
 resource "aws_lb_listener" "http" {
+  #checkov:skip=CKV_AWS_2:HTTPS on the ALB needs a custom domain and certificate; viewers get HTTPS from CloudFront. Production: CloudFront VPC origin or HTTPS origin.
+  #checkov:skip=CKV_AWS_103:Same reason as CKV_AWS_2: no TLS listener without a custom domain.
   load_balancer_arn = aws_lb.this.arn
   port              = 80
   protocol          = "HTTP"
@@ -107,7 +116,15 @@ data "aws_cloudfront_response_headers_policy" "security" {
 }
 
 resource "aws_cloudfront_distribution" "this" {
+  #checkov:skip=CKV_AWS_174:The free *.cloudfront.net certificate can't set a minimum TLS version. A custom domain with ACM would allow TLSv1.2_2021.
+  #checkov:skip=CKV2_AWS_42:Same reason: no custom domain in this demo.
+  #checkov:skip=CKV_AWS_86:Access logs skipped to save cost; WAF logs blocked requests.
+  #checkov:skip=CKV_AWS_374:DocFlow serves users worldwide, so there is no geographic restriction.
+  #checkov:skip=CKV_AWS_310:Only one origin exists; failover would need a second region (see docs/disaster-recovery.md).
+  #checkov:skip=CKV2_AWS_47:Log4j protection (KnownBadInputs) is on. The check also wants the anonymous-IP list, which would block VPN users and cloud-hosted clients, including the CI smoke test.
+  #checkov:skip=CKV_AWS_305:Not applicable: the origin is a dynamic app, not an S3 website.
   enabled         = true
+  web_acl_id      = aws_wafv2_web_acl.this.arn
   comment         = "${var.name} DocFlow"
   is_ipv6_enabled = true
 

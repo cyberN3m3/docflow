@@ -108,7 +108,7 @@ Exported the database, copied the files to S3, restored the data inside the VPC 
 | --- | --- | --- |
 | Checkov IaC findings | 51 failed | **0 failed** (6 fixed, 45 accepted with reasons) |
 | Prowler, CIS AWS benchmark 7.0 (whole account) | 60.6% | **63.5%** (the rest: [explained](docs/security.md#4-audit-results)) |
-| Container image (ECR scan) | 0 critical, 3 high | _next scan_ |
+| Container image (ECR scan) | 0 critical, 3 high | 0 critical, 3 high: no Debian fix yet, none reachable by the app ([triaged](docs/security.md#container-image-amazon-ecr-scan)) |
 
 STRIDE threat model, defence in depth from edge to account, CI security gates (Gitleaks, Checkov, pip-audit, ECR scan gate), and an incident runbook.
 

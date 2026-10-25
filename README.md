@@ -196,4 +196,12 @@ terraform destroy                                              # at the end of e
 
 ## Evidence
 
-Screenshots in [`docs/evidence/`](docs/evidence/): the legacy stack, the app live on AWS, the migration verification, the green pipeline, the security audit, the monitoring dashboard and alarm email, and the DR drills.
+All screenshots are in [`docs/evidence/`](docs/evidence/).
+
+| Phase | Screenshot |
+| --- | --- |
+| 0 Legacy stack | [Six containers running](docs/evidence/phase0-compose-ps.png) · [The app](docs/evidence/phase0-dashboard.png) · [First green CI](docs/evidence/phase0-ci-green.png) |
+| 3 Network and data | [VPC: public and private subnets, S3 endpoint, no NAT](docs/evidence/phase3-vpc-resource-map.png) · [RDS: private, no internet access](docs/evidence/phase3-rds-private.png) |
+| 5 Running on AWS | [App live on CloudFront HTTPS](docs/evidence/phase5-app-on-aws.png) · [End-to-end test passing on AWS](docs/evidence/phase5-e2e-aws.png) |
+| 6 Migration | [Counts verified: zero data loss](docs/evidence/phase6-migration-verified.png) |
+| 7 CI/CD | [Pipeline green: test → build → scan → deploy](docs/evidence/phase7-pipeline-green.png) |

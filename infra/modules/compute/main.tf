@@ -7,6 +7,18 @@ resource "aws_ecs_cluster" "this" {
   #checkov:skip=CKV_AWS_65:Container Insights is switched on in Phase 10 (monitoring).
 }
 
+# Fargate Spot (Phase 9): spare AWS capacity at up to 70% off, which AWS can
+# reclaim with a 2-minute warning. Good for the worker, bad for the website.
+resource "aws_ecs_cluster_capacity_providers" "this" {
+  cluster_name       = aws_ecs_cluster.this.name
+  capacity_providers = ["FARGATE", "FARGATE_SPOT"]
+
+  default_capacity_provider_strategy {
+    capacity_provider = "FARGATE"
+    weight            = 1
+  }
+}
+
 resource "aws_cloudwatch_log_group" "web" {
   name              = "/ecs/${var.name}/web"
   retention_in_days = var.log_retention_days
@@ -155,10 +167,15 @@ resource "aws_ecs_task_definition" "worker" {
 
   container_definitions = jsonencode([
     {
-      name        = "worker"
-      image       = var.image
-      essential   = true
-      command     = ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+      name      = "worker"
+      image     = var.image
+      essential = true
+      command   = ["celery", "-A", "app.worker.celery_app", "worker", "--loglevel=info", "--concurrency=2"]
+
+      # On a Spot interruption, ECS sends SIGTERM. Celery then stops taking
+      # new jobs and finishes the current one; give it the full 2 minutes.
+      # A job cut off anyway is not lost: acks_late returns it to the queue.
+      stopTimeout = 120
       environment = concat(local.app_environment, [{ name = "GOTENBERG_URL", value = "http://localhost:3000" }])
       secrets     = local.app_secrets
 
@@ -201,7 +218,12 @@ resource "aws_ecs_service" "worker" {
   cluster         = aws_ecs_cluster.this.id
   task_definition = aws_ecs_task_definition.worker.arn
   desired_count   = 1
-  launch_type     = "FARGATE"
+
+  # FARGATE_SPOT by default (set worker_use_spot = false for on-demand).
+  capacity_provider_strategy {
+    capacity_provider = var.worker_use_spot ? "FARGATE_SPOT" : "FARGATE"
+    weight            = 1
+  }
 
   network_configuration {
     subnets          = var.public_subnet_ids
@@ -219,4 +241,6 @@ resource "aws_ecs_service" "worker" {
   lifecycle {
     ignore_changes = [desired_count]
   }
+
+  depends_on = [aws_ecs_cluster_capacity_providers.this]
 }

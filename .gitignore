@@ -20,3 +20,6 @@ migration/
 
 # Security scan reports describe the AWS account: never commit them
 security-reports/
+
+# Disaster recovery drill results (copy the numbers into docs/disaster-recovery.md)
+dr-reports/

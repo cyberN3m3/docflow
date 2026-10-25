@@ -13,3 +13,7 @@ output "queue_arn" {
 output "dead_letter_queue_arn" {
   value = aws_sqs_queue.dead_letter.arn
 }
+
+output "dead_letter_queue_name" {
+  value = aws_sqs_queue.dead_letter.name
+}

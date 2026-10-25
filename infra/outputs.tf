@@ -59,3 +59,35 @@ output "public_subnet_ids_csv" {
 output "app_security_group_id" {
   value = module.network.app_security_group_id
 }
+
+# --- Phase 10 -------------------------------------------------------------------
+
+output "dashboard_url" {
+  description = "CloudWatch dashboard for DocFlow."
+  value       = "https://${var.region}.console.aws.amazon.com/cloudwatch/home?region=${var.region}#dashboards/dashboard/${module.monitoring.dashboard_name}"
+}
+
+output "alerts_topic_arn" {
+  value = module.monitoring.alerts_topic_arn
+}
+
+# Used by the disaster recovery drills (scripts/dr/)
+output "db_identifier" {
+  value = module.database.identifier
+}
+
+output "db_subnet_group" {
+  value = module.database.subnet_group_name
+}
+
+output "db_parameter_group" {
+  value = module.database.parameter_group_name
+}
+
+output "db_security_group_id" {
+  value = module.network.db_security_group_id
+}
+
+output "web_service_name" {
+  value = module.compute.web_service_name
+}

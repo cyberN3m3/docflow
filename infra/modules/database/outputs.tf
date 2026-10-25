@@ -19,3 +19,15 @@ output "master_user_secret_arn" {
   description = "Secrets Manager secret holding the generated password."
   value       = aws_db_instance.this.master_user_secret[0].secret_arn
 }
+
+output "identifier" {
+  value = aws_db_instance.this.identifier
+}
+
+output "subnet_group_name" {
+  value = aws_db_subnet_group.this.name
+}
+
+output "parameter_group_name" {
+  value = aws_db_parameter_group.this.name
+}

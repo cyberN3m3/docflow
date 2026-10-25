@@ -4,7 +4,7 @@
 resource "aws_ecs_cluster" "this" {
   name = var.name
 
-  #checkov:skip=CKV_AWS_65:Container Insights is switched on in Phase 10 (monitoring).
+  #checkov:skip=CKV_AWS_65:Container Insights costs about $10/month for this cluster; the free service-level ECS metrics (CPU, memory) feed the alarms instead.
 }
 
 # Fargate Spot (Phase 9): spare AWS capacity at up to 70% off, which AWS can

@@ -79,7 +79,12 @@ resource "aws_db_instance" "this" {
   # Single-AZ to keep costs down. Production would use multi_az = true.
   multi_az = false
 
-  backup_retention_period = 1
+  # Daily automated backups plus transaction logs: the database can be
+  # restored to any second in the last 7 days (point-in-time recovery).
+  # Backup storage up to the database's size is free.
+  backup_retention_period = var.backup_retention_days
+  backup_window           = "03:00-04:00" # UTC, a quiet hour
+  maintenance_window      = "sun:04:30-sun:05:30"
   copy_tags_to_snapshot   = true
 
   auto_minor_version_upgrade = true

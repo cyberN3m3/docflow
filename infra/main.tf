@@ -1,6 +1,7 @@
 # The DocFlow environment. Modules are added phase by phase:
 #   Phase 3: network, storage, database, queue
 #   Phase 5: compute, edge
+#   Phase 8: security (WAF, flow logs, hardening inside the modules)
 #   Phase 10: monitoring
 
 data "aws_caller_identity" "current" {}
@@ -97,4 +98,28 @@ module "compute" {
   db_username            = module.database.username
   db_password_secret_arn = module.database.master_user_secret_arn
   app_secret_key_arn     = aws_secretsmanager_secret.app_secret_key.arn
+}
+
+# --- Phase 10: monitoring and alerting -----------------------------------------
+
+module "monitoring" {
+  source = "./modules/monitoring"
+
+  name        = local.name
+  region      = var.region
+  alert_email = var.alert_email
+
+  alb_arn_suffix             = module.edge.alb_arn_suffix
+  target_group_arn_suffix    = module.edge.target_group_arn_suffix
+  cloudfront_distribution_id = module.edge.cloudfront_distribution_id
+  web_acl_name               = module.edge.web_acl_name
+
+  cluster_name          = module.compute.cluster_name
+  web_service_name      = module.compute.web_service_name
+  worker_service_name   = module.compute.worker_service_name
+  worker_log_group_name = module.compute.worker_log_group_name
+
+  db_identifier          = module.database.identifier
+  queue_name             = module.queue.queue_name
+  dead_letter_queue_name = module.queue.dead_letter_queue_name
 }

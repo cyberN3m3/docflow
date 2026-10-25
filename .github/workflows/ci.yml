@@ -66,6 +66,9 @@ jobs:
       - name: Validate main environment
         working-directory: infra
         run: terraform init -backend=false && terraform validate
+      - name: Plan against mock AWS providers (no credentials needed)
+        working-directory: infra
+        run: terraform test
   # ---------------------------------------------------------------------------
   # Security scans (Phase 8). Any finding fails the build. Accepted risks are
   # skipped in the code itself (#checkov:skip=... with a reason), so every

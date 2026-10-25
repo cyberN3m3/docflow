@@ -29,3 +29,8 @@ output "web_acl_name" {
   description = "Used by CloudWatch metrics in Phase 10."
   value       = aws_wafv2_web_acl.this.name
 }
+
+output "cloudfront_distribution_id" {
+  description = "Used by CloudWatch metrics in Phase 10."
+  value       = aws_cloudfront_distribution.this.id
+}

@@ -43,6 +43,17 @@
       </div>
     </div>
 
+    {% if guest %}
+      <p class="guest-note" id="guest-note">
+        {% if guest.left > 0 %}
+          <strong>{{ guest.left }} of {{ guest.limit }}</strong> free conversions left without an account.
+          Files are deleted after {{ guest.retention_hours }} hours. <a href="/register">Create a free account</a> to keep them and keep converting.
+        {% else %}
+          You've used your {{ guest.limit }} free conversions. <a href="/register">Create a free account</a> to keep converting; your files come with you.
+        {% endif %}
+      </p>
+    {% endif %}
+
     <div class="fallback">
       <form id="convert-form" method="post" action="/convert" enctype="multipart/form-data">
         <label for="convert-file">Convert a document to PDF</label>

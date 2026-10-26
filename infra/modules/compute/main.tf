@@ -48,6 +48,12 @@ locals {
     { name = "DB_USER", value = var.db_username },
     { name = "COOKIE_SECURE", value = "true" },
     { name = "MAX_UPLOAD_MB", value = "20" },
+    # Guests: 10 free conversions each, 30 per network per day, files kept 24 hours.
+    # CloudFront and the ALB each append to X-Forwarded-For, so the visitor is 2 hops from the right.
+    { name = "GUEST_CONVERSIONS", value = "10" },
+    { name = "GUEST_IP_DAILY", value = "30" },
+    { name = "GUEST_RETENTION_HOURS", value = "24" },
+    { name = "TRUSTED_PROXY_HOPS", value = "2" },
   ]
 
   # Read-only containers: an attacker who gets code execution can't modify

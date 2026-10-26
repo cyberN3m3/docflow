@@ -23,7 +23,7 @@ from sqlalchemy import delete, func, select, text
 from sqlalchemy.orm import Session
 
 from .db import SessionLocal, init_db
-from .models import Job, User
+from .models import GUEST_EMAIL_DOMAIN, Job, User
 from .storage import get_storage
 
 log = logging.getLogger("docflow.migrate")
@@ -48,9 +48,16 @@ def _from_json(field: str, value):
 
 # --- export ------------------------------------------------------------------
 
+def _accounts(db: Session):
+    """Real accounts only: guests are temporary (deleted within a day) and are not migrated."""
+    users = db.scalars(select(User).where(User.email.not_like(f"%@{GUEST_EMAIL_DOMAIN}")).order_by(User.id)).all()
+    ids = {u.id for u in users}
+    jobs = [j for j in db.scalars(select(Job).order_by(Job.created_at)).all() if j.user_id in ids]
+    return users, jobs
+
+
 def export_data(db: Session) -> dict:
-    users = db.scalars(select(User).order_by(User.id)).all()
-    jobs = db.scalars(select(Job).order_by(Job.created_at)).all()
+    users, jobs = _accounts(db)
     return {
         "format_version": FORMAT_VERSION,
         "users": [{f: _to_json(getattr(u, f)) for f in USER_FIELDS} for u in users],
@@ -106,8 +113,7 @@ def import_data(db: Session, data: dict, replace: bool = False) -> dict:
 
 def collect_counts(db: Session, storage) -> dict:
     """What a migration must preserve, in a form that's easy to compare."""
-    users = db.scalars(select(User)).all()
-    jobs = db.scalars(select(Job)).all()
+    users, jobs = _accounts(db)
     done = [j for j in jobs if j.status == "done" and j.output_key]
     return {
         "users": len(users),

@@ -1,5 +1,10 @@
+import asyncio
+import hashlib
+import hmac
 import logging
 import re
+import secrets
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -7,7 +12,7 @@ from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, Upload
 from fastapi.responses import JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.orm import Session
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -16,7 +21,7 @@ from .config import settings
 from .db import db_is_healthy, get_db, init_db
 from .filenames import content_disposition, safe_filename
 from .gotenberg import CONVERTIBLE_EXTENSIONS
-from .models import Job, User
+from .models import GUEST_EMAIL_DOMAIN, GuestUse, Job, User, is_guest
 from .storage import get_storage
 from .worker import process_job
 
@@ -32,7 +37,30 @@ async def lifespan(app: FastAPI):
     settings.validate()  # stop at start-up if the configuration is incomplete
     log.info("storage=%s broker=%s", settings.storage_backend, "sqs" if settings.uses_sqs else "redis")
     init_db()
+    cleaner = asyncio.create_task(_cleanup_loop()) if settings.guest_conversions > 0 else None
     yield
+    if cleaner:
+        cleaner.cancel()
+
+
+async def _cleanup_loop() -> None:
+    """Delete expired guest files once an hour, off the request path."""
+    from .cleanup import run_cleanup
+
+    while True:
+        await asyncio.sleep(60)
+        try:
+            await asyncio.to_thread(_run_cleanup_once, run_cleanup)
+        except Exception:  # never let clean-up take the web app down
+            log.exception("guest clean-up failed")
+        await asyncio.sleep(3600 - 60)
+
+
+def _run_cleanup_once(run_cleanup) -> None:
+    from .db import SessionLocal
+
+    with SessionLocal() as db:
+        run_cleanup(db)
 
 
 app = FastAPI(title=settings.app_name, lifespan=lifespan)
@@ -101,7 +129,81 @@ def job_status_label(job: Job) -> str:
     return STATUS_LABELS.get(job.status, job.status.capitalize())
 
 
-templates.env.globals.update(job_kind=job_kind, job_status_label=job_status_label)
+templates.env.globals.update(job_kind=job_kind, job_status_label=job_status_label, is_guest=is_guest)
+
+
+# ---------- guests ----------
+
+def guest_mode() -> bool:
+    return settings.guest_conversions > 0
+
+
+def client_ip(request: Request) -> str:
+    """The visitor's address. Each trusted proxy appends the address it saw, so the
+    real client is that many entries from the right; anything further left could be forged."""
+    hops = settings.trusted_proxy_hops
+    chain = [p.strip() for p in request.headers.get("x-forwarded-for", "").split(",") if p.strip()]
+    if hops and len(chain) >= hops:
+        return chain[-hops]
+    return request.client.host if request.client else "unknown"
+
+
+def ip_key(request: Request) -> str:
+    # Keyed hash: the counter works without storing anyone's IP address.
+    return hmac.new(settings.secret_key.encode(), client_ip(request).encode(), hashlib.sha256).hexdigest()
+
+
+def guest_used(request: Request, db: Session, user: User) -> int:
+    # The signed session counter never goes down, so deleting files doesn't give credits back.
+    jobs = db.scalar(select(func.count()).select_from(Job).where(Job.user_id == user.id)) or 0
+    return max(int(request.session.get("guest_used", 0)), jobs)
+
+
+def guest_status(request: Request, db: Session, user: User | None) -> dict | None:
+    if not guest_mode() or (user and not is_guest(user)):
+        return None
+    used = guest_used(request, db, user) if user else 0
+    limit = settings.guest_conversions
+    return {"used": used, "limit": limit, "left": max(limit - used, 0),
+            "retention_hours": settings.guest_retention_hours}
+
+
+def acting_user(request: Request, db: Session) -> tuple[User | None, Response | None]:
+    """The account a conversion belongs to: the signed-in user, or a guest (created on first use)."""
+    user = current_user(request, db)
+    if user and not is_guest(user):
+        return user, None
+    if not guest_mode():
+        return None, RedirectResponse("/login", status_code=303)
+
+    limit = settings.guest_conversions
+    if user and guest_used(request, db, user) >= limit:
+        flash(request, f"You've used your {limit} free conversions. Create a free account to keep converting; "
+                       "your files come with you.", "info")
+        return None, RedirectResponse("/register", status_code=303)
+    since = datetime.now(timezone.utc) - timedelta(hours=24)
+    from_network = db.scalar(select(func.count()).select_from(GuestUse)
+                             .where(GuestUse.ip_hash == ip_key(request), GuestUse.created_at >= since)) or 0
+    if from_network >= settings.guest_ip_daily:
+        flash(request, "Free conversions from your network are used up for today. "
+                       "Create a free account to keep converting.", "info")
+        return None, RedirectResponse("/register", status_code=303)
+
+    if user is None:
+        user = User(email=f"guest-{secrets.token_hex(8)}@{GUEST_EMAIL_DOMAIN}", password_hash="!")  # cannot log in
+        db.add(user)
+        db.commit()
+        request.session["user_id"] = user.id
+        request.session["guest_used"] = 0
+    return user, None
+
+
+def record_guest_use(request: Request, db: Session, user: User) -> None:
+    if not is_guest(user):
+        return
+    request.session["guest_used"] = int(request.session.get("guest_used", 0)) + 1
+    db.add(GuestUse(ip_hash=ip_key(request)))
+    db.commit()
 
 
 def extension(name: str) -> str:
@@ -148,6 +250,8 @@ def healthz():
 
 @app.get("/")
 def index(request: Request, db: Session = Depends(get_db)):
+    if guest_mode():
+        return RedirectResponse("/dashboard", status_code=303)
     return RedirectResponse("/dashboard" if current_user(request, db) else "/login", status_code=303)
 
 
@@ -170,12 +274,18 @@ def register(request: Request, email: str = Form(...), password: str = Form(...)
         flash(request, error, "error")
         return RedirectResponse("/register", status_code=303)
 
-    user = User(email=email, password_hash=hash_password(password))
-    db.add(user)
+    guest = current_user(request, db)
+    if is_guest(guest):  # keep the guest's files: the guest becomes the account
+        guest.email, guest.password_hash = email, hash_password(password)
+        user, kept = guest, True
+    else:
+        user, kept = User(email=email, password_hash=hash_password(password)), False
+        db.add(user)
     db.commit()
     request.session.clear()
     request.session["user_id"] = user.id
-    flash(request, "Your account is ready. Add a document to make your first PDF.", "success")
+    flash(request, "Your account is ready. Your files are here." if kept
+          else "Your account is ready. Add a document to make your first PDF.", "success")
     return RedirectResponse("/dashboard", status_code=303)
 
 
@@ -190,6 +300,11 @@ def login(request: Request, email: str = Form(...), password: str = Form(...), d
     if user is None or not verify_password(password, user.password_hash):
         flash(request, "Wrong email or password.", "error")
         return RedirectResponse("/login", status_code=303)
+    guest = current_user(request, db)
+    if is_guest(guest):  # bring the guest's files into the account, then drop the guest
+        db.execute(update(Job).where(Job.user_id == guest.id).values(user_id=user.id))
+        db.delete(guest)
+        db.commit()
     request.session.clear()
     request.session["user_id"] = user.id
     return RedirectResponse("/dashboard", status_code=303)
@@ -198,7 +313,7 @@ def login(request: Request, email: str = Form(...), password: str = Form(...), d
 @app.post("/logout")
 def logout(request: Request):
     request.session.clear()
-    return RedirectResponse("/login", status_code=303)
+    return RedirectResponse("/" if guest_mode() else "/login", status_code=303)
 
 
 # ---------- app ----------
@@ -206,27 +321,27 @@ def logout(request: Request):
 @app.get("/dashboard")
 def dashboard(request: Request, db: Session = Depends(get_db)):
     user = current_user(request, db)
-    if user is None:
+    if user is None and not guest_mode():
         return RedirectResponse("/login", status_code=303)
     jobs = db.scalars(
         select(Job).where(Job.user_id == user.id).order_by(Job.created_at.desc()).limit(50)
-    ).all()
+    ).all() if user else []
     counts = {
         "ready": sum(j.status == "done" for j in jobs),
         "progress": sum(j.status in ("queued", "processing") for j in jobs),
         "failed": sum(j.status == "failed" for j in jobs),
     }
     return render(
-        request, "dashboard.html", user=user, jobs=jobs, counts=counts,
+        request, "dashboard.html", user=user, jobs=jobs, counts=counts, guest=guest_status(request, db, user),
         accept=",".join(f".{ext}" for ext in sorted(CONVERTIBLE_EXTENSIONS)),
     )
 
 
 @app.post("/convert")
 async def convert(request: Request, file: UploadFile = File(...), db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
+    user, stop = acting_user(request, db)
+    if stop:
+        return stop
 
     name = safe_filename(file.filename)
     if extension(name) not in CONVERTIBLE_EXTENSIONS:
@@ -247,15 +362,16 @@ async def convert(request: Request, file: UploadFile = File(...), db: Session = 
     db.commit()
 
     enqueue(db, job)
+    record_guest_use(request, db, user)
     flash(request, f"Converting {name}…", "success")
     return RedirectResponse("/dashboard", status_code=303)
 
 
 @app.post("/merge")
 async def merge(request: Request, files: list[UploadFile] = File(...), db: Session = Depends(get_db)):
-    user = current_user(request, db)
-    if user is None:
-        return RedirectResponse("/login", status_code=303)
+    user, stop = acting_user(request, db)
+    if stop:
+        return stop
 
     files = [f for f in files if f.filename]
     if len(files) < 2:
@@ -291,6 +407,7 @@ async def merge(request: Request, files: list[UploadFile] = File(...), db: Sessi
     db.commit()
 
     enqueue(db, job)
+    record_guest_use(request, db, user)
     flash(request, f"Merging {len(names)} PDFs…", "success")
     return RedirectResponse("/dashboard", status_code=303)
 

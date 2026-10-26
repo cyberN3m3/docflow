@@ -17,7 +17,10 @@ def test_healthz(client):
     assert r.json() == {"status": "ok", "database": "up"}
 
 
-def test_dashboard_requires_login(client):
+def test_dashboard_requires_login_when_guest_mode_is_off(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guest_conversions", 0)
     r = client.get("/dashboard", follow_redirects=False)
     assert r.status_code == 303 and r.headers["location"] == "/login"
 
@@ -162,3 +165,133 @@ def test_ascii_fallback_never_empty():
 
     assert ascii_fallback("合同.pdf") == "document.pdf"
     assert ascii_fallback("Café menu.pdf") == "Cafe menu.pdf"
+
+
+# ---------- guests ----------
+
+def _guest_convert(client, name="note.txt", ip=None):
+    headers = {"X-Forwarded-For": ip} if ip else {}
+    return client.post("/convert", files={"file": (name, b"hello")}, headers=headers)
+
+
+def test_visitor_can_use_the_tool_without_an_account(client):
+    from app.models import User
+
+    with SessionLocal() as db:
+        users_before = db.query(User).count()
+    r = client.get("/")
+    assert r.status_code == 200 and ">Convert to PDF</h1>" in r.text
+    assert "Sign up free" in r.text and "10 of 10" in r.text
+    with SessionLocal() as db:
+        assert db.query(User).count() == users_before  # no guest row just for looking
+
+
+def test_guest_converts_and_downloads(client):
+    r = _guest_convert(client, "guest-report.docx")
+    assert "9 of 10" in r.text
+    job = latest_job()
+    assert job.status == "done"
+    assert client.get(f"/jobs/{job.id}/download").status_code == 200
+
+
+def test_guest_limit_and_deleting_does_not_refund(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guest_conversions", 2)
+    _guest_convert(client, "one.txt")
+    _guest_convert(client, "two.txt")
+    client.post(f"/jobs/{latest_job().id}/delete")
+    r = _guest_convert(client, "three.txt")
+    assert r.url.path == "/register"
+    assert "used your 2 free conversions" in r.text
+    assert latest_job().input_names != ["three.txt"]
+
+
+def test_network_limit_survives_cleared_cookies(client, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "guest_ip_daily", 2)
+    _guest_convert(client, "a.txt", ip="203.0.113.9")
+    client.cookies.clear()
+    _guest_convert(client, "b.txt", ip="203.0.113.9")
+    client.cookies.clear()
+    r = _guest_convert(client, "c.txt", ip="203.0.113.9")
+    assert r.url.path == "/register" and "used up for today" in r.text
+    client.cookies.clear()
+    r = _guest_convert(client, "d.txt", ip="198.51.100.4")  # another network is unaffected
+    assert r.url.path == "/dashboard"
+
+
+def test_guest_signup_keeps_files(client):
+    _guest_convert(client, "keep-me.txt")
+    guest_job = latest_job()
+    r = client.post("/register", data={"email": "kept@example.com", "password": "password123"})
+    assert "Your files are here" in r.text and "keep-me.pdf" in r.text
+    with SessionLocal() as db:
+        from app.models import User
+
+        owner = db.get(User, guest_job.user_id)
+        assert owner.email == "kept@example.com"
+
+
+def test_guest_login_brings_files_into_account(client):
+    from app.models import User
+
+    client.post("/register", data={"email": "returning@example.com", "password": "password123"})
+    client.post("/logout")
+    client.cookies.clear()
+    _guest_convert(client, "made-as-guest.txt")
+    guest_id = latest_job().user_id
+    r = client.post("/login", data={"email": "returning@example.com", "password": "password123"})
+    assert "made-as-guest.pdf" in r.text
+    with SessionLocal() as db:
+        assert db.get(User, guest_id) is None
+        account = db.query(User).filter_by(email="returning@example.com").one()
+        assert latest_job().user_id == account.id
+
+
+def test_cleanup_removes_only_old_guest_files(client, logged_in):
+    from datetime import datetime, timedelta, timezone
+
+    from app.cleanup import run_cleanup
+    from app.models import User
+    from app.storage import get_storage
+
+    logged_in.post("/convert", files={"file": ("account-file.txt", b"x")})
+    account_job = latest_job()
+    logged_in.post("/logout")
+    logged_in.cookies.clear()
+    _guest_convert(logged_in, "old-guest.txt")
+    guest_job = latest_job()
+    _guest_convert(logged_in, "fresh-guest.txt")
+    fresh_job = latest_job()
+
+    old = datetime.now(timezone.utc) - timedelta(hours=30)
+    with SessionLocal() as db:
+        for job_id in (account_job.id, guest_job.id):
+            db.get(Job, job_id).created_at = old
+        db.get(User, guest_job.user_id).created_at = old
+        db.commit()
+        result = run_cleanup(db)
+
+    assert result["jobs"] == 1
+    with SessionLocal() as db:
+        assert db.get(Job, guest_job.id) is None
+        assert db.get(Job, fresh_job.id) is not None      # younger than 24 hours
+        assert db.get(Job, account_job.id) is not None    # accounts are never cleaned up
+    assert not get_storage().exists(guest_job.input_keys[0])
+
+
+def test_client_ip_ignores_forged_addresses(monkeypatch):
+    from starlette.requests import Request
+
+    from app.config import settings
+    from app.main import client_ip
+
+    def req(xff):
+        return Request({"type": "http", "headers": [(b"x-forwarded-for", xff.encode())], "client": ("10.0.0.5", 1234)})
+
+    monkeypatch.setattr(settings, "trusted_proxy_hops", 2)  # AWS: CloudFront + ALB
+    assert client_ip(req("6.6.6.6, 203.0.113.9, 130.176.0.1")) == "203.0.113.9"
+    monkeypatch.setattr(settings, "trusted_proxy_hops", 1)  # legacy: nginx
+    assert client_ip(req("6.6.6.6, 203.0.113.9")) == "203.0.113.9"

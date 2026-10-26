@@ -11,6 +11,15 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
+# Guests are ordinary users with a placeholder address on a reserved domain
+# (.invalid can never receive mail), so no table needs a new column.
+GUEST_EMAIL_DOMAIN = "guests.invalid"
+
+
+def is_guest(user: "User | None") -> bool:
+    return user is not None and user.email.endswith("@" + GUEST_EMAIL_DOMAIN)
+
+
 class User(Base):
     __tablename__ = "users"
 
@@ -36,3 +45,16 @@ class Job(Base):
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class GuestUse(Base):
+    """One free conversion by a guest, keyed by a keyed hash of their IP address (never the IP itself).
+
+    Used to cap free conversions per network, so clearing cookies doesn't reset the limit.
+    """
+
+    __tablename__ = "guest_uses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ip_hash: Mapped[str] = mapped_column(String(64), index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, index=True)

@@ -25,6 +25,14 @@ class Settings:
         self.gotenberg_url = _env("GOTENBERG_URL", "http://localhost:3000").rstrip("/")
         self.max_upload_mb = int(_env("MAX_UPLOAD_MB", "20"))
         self.cookie_secure = _env("COOKIE_SECURE", "false").lower() == "true"
+        # --- Guests: try DocFlow without an account ---------------------------
+        # GUEST_CONVERSIONS=0 turns guest mode off (an account is required).
+        self.guest_conversions = int(_env("GUEST_CONVERSIONS", "10"))
+        self.guest_ip_daily = int(_env("GUEST_IP_DAILY", "30"))          # per network, per 24 hours
+        self.guest_retention_hours = int(_env("GUEST_RETENTION_HOURS", "24"))
+        # How many proxies add themselves to X-Forwarded-For in front of the app:
+        # 1 = nginx (legacy); 2 = CloudFront + ALB (AWS). 0 = use the socket address.
+        self.trusted_proxy_hops = int(_env("TRUSTED_PROXY_HOPS", "1"))
         # Run Celery tasks inline (tests / quick local dev without a broker).
         self.celery_eager = _env("CELERY_EAGER", "false").lower() == "true"
 

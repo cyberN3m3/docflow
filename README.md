@@ -1,4 +1,4 @@
-# DocFlow: migrating a single-server app to a secure, scalable AWS architecture
+# DocFlow: moving a single-server app to AWS with Terraform
 
 [![CI](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml/badge.svg)](https://github.com/cybern3m3/docflow/actions/workflows/ci.yml)
 [![Open in GitHub Codespaces](https://github.com/codespaces/badge.svg)](https://codespaces.new/cybern3m3/docflow)

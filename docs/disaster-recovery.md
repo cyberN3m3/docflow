@@ -16,9 +16,9 @@
 | 3 | An Availability Zone goes down | The ALB spans two AZs, and with 2+ tasks ECS spreads them across both (with 1 task, ECS restarts it in the healthy AZ). The database is single-AZ: restore it in the other AZ (scenario 4). Production: Multi-AZ RDS, with automatic failover in about 1–2 minutes | Partly | `task-failure-drill.sh 2` |
 | 4 | The database is corrupted, or data is deleted by mistake | Point-in-time restore to a new instance from just before the incident, verify, then point the app at it (`DB_HOST`) | Scripted | `db-restore-drill.sh` |
 | 5 | A user's file is deleted or overwritten | Restore the previous S3 version (remove the delete marker) | Scripted | `s3-recovery-drill.sh` |
-| 6 | Poison job / conversion bug | After 3 failures the job moves to the dead-letter queue, so other jobs keep flowing; alarm `jobs-dead-lettered` | Yes | — |
+| 6 | Poison job / conversion bug | After 3 failures the job moves to the dead-letter queue, so other jobs keep flowing; alarm `jobs-dead-lettered` | Yes | - |
 | 7 | The whole region is down | All infrastructure is Terraform: apply in another region (change `region`), restore data from cross-region copies. **Not yet in place:** needs AWS Backup cross-region copy for RDS and S3 replication | No | Rebuild time is measured by every `terraform apply` |
-| 8 | AWS account compromised | No long-lived keys exist. Revoke SSO sessions, rotate secrets, review CloudTrail, rebuild from Terraform. Production: backups copied to a separate, locked account | Partly | — |
+| 8 | AWS account compromised | No long-lived keys exist. Revoke SSO sessions, rotate secrets, review CloudTrail, rebuild from Terraform. Production: backups copied to a separate, locked account | Partly | - |
 
 ## Backups
 
@@ -28,7 +28,7 @@
 | Files | S3 versioning | Old versions 30 days | Previous version |
 | Infrastructure | Terraform code in Git; state in a versioned S3 bucket | Forever / 90 days | `terraform apply` |
 | Container images | ECR, immutable tags | Last 10 | Redeploy the tag |
-| Audit trail | CloudTrail | 1 year | — |
+| Audit trail | CloudTrail | 1 year | - |
 
 **Demo caveat:** this environment is destroyed after every session, which deletes the database and its automated backups (`skip_final_snapshot = true`). That's acceptable here because the drills run within a session. Production would set `deletion_protection = true`, take a final snapshot, and copy backups to another region.
 

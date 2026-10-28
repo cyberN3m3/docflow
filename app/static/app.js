@@ -9,7 +9,7 @@
   const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 
   // ---------- times in the viewer's own time zone ----------
-  const pad = (n) => String(n).padStart(2, '0'); // clock digits (17:05); taste-skill-ignore
+  const pad = (n) => String(n).padStart(2, '0');
   const sameDay = (a, b) => a.toDateString() === b.toDateString();
   $$('time[datetime]').forEach((el) => {
     const d = new Date(el.getAttribute('datetime'));
@@ -25,7 +25,7 @@
     el.title = d.toLocaleString();
   });
 
-  // ---------- toasts: enter and leave by the same edge; timers pause ----------
+  // ---------- toasts ----------
   const toaster = $('#toaster');
   const dismiss = (t) => {
     if (t.classList.contains('leaving')) return;
@@ -101,7 +101,7 @@
   }));
   if (indicator) {
     moveIndicator(tabs[0]);
-    // Place it first, then let it move: no slide on page load.
+    // no slide animation on page load
     document.fonts?.ready.then(() => { moveIndicator(tabs.find((t) => t.getAttribute('aria-selected') === 'true')); requestAnimationFrame(() => indicator.classList.add('ready')); });
     window.addEventListener('resize', () => moveIndicator(tabs.find((t) => t.getAttribute('aria-selected') === 'true')));
   }
@@ -136,7 +136,7 @@
     btn.addEventListener('contextmenu', (e) => e.preventDefault());
   });
 
-  // ---------- live status: update the row in place ----------
+  // ---------- live status ----------
   const tpl = $('#status-tpl');
   const statusEl = (look, label) => {
     const el = tpl.content.querySelector(`[data-look="${look}"]`).cloneNode(true);

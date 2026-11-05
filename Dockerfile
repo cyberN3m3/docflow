@@ -1,4 +1,4 @@
-FROM python:3.12-slim
+FROM python:3.15-slim
 
 # Health checks are defined where the container runs (the load balancer on
 # AWS, Docker Compose locally). The same image is also the worker, which has
